@@ -1,0 +1,30 @@
+{
+  "_note": "L1 always-on facts for GRAPHICAL BLOCK generation. 只放对『选哪个积木』有用的事实——不含任何 Python 文本语法(无 f-string/海象/match 这种概念)，也不列 Python 方法名(模型用的是积木，不是 Python API)。",
+  "capabilities": [
+    "板载硬件：3 个 RGB 灯、A/B 两个按键、6 个触摸键(P/Y/T/H/O/N)、光线/声音/加速度/陀螺仪/磁力计传感器、蜂鸣器；屏幕 v2 是单色 OLED、v3 是彩色 LCD。",
+    "引脚可做：数字输入/输出、模拟输入、PWM、触摸、I2C（具体引脚号 v2 与 v3 不同，引脚下拉积木里会列出可选值）。",
+    "联网：WiFi（连接/AP 模式）、BLE 蓝牙；这些 v2/v3 都有。"
+  ],
+  "version_signals": {
+    "v2": ["单色 OLED", "ESP32(非S3)"],
+    "v3": ["彩色 LCD", "LVGL", "ESP32-S3"],
+    "not_a_signal": ["WiFi", "BLE", "光照/声音/加速度/磁力计", "摄像头"]
+  },
+  "version_diffs_critical": [
+    "显示：v2 用单色 OLED 积木(显示文本/画形状/显示生效)；v3 用彩色 LCD/LVGL 积木——两套积木不要混用。",
+    "同一功能 v2 和 v3 可能是不同的积木，按当前主控只用对应板子的积木。"
+  ],
+  "display_geometry": {
+    "v2_oled": "128×64 像素，原点左上，文本积木多行按 y=0/16/32/48（最多约 4 行）。",
+    "v3_lcd": "320×172 像素，中文较大字体下约每行 13 字、约 3 行。"
+  },
+  "coding_basics": [
+    "【v2 OLED 必读】用绘制积木(显示文本 mpython_display_DispChar / 画线 / 画形状 / 描点)画完后，必须紧跟一个 mpython_display_Show(「OLED 显示生效」)，否则屏幕看不到任何东西——绘图只改缓存，Show 才真正刷屏。",
+    "【清屏】开始绘制前或每次重画前先清屏：用 mpython_display_fill(「OLED 显示」选清空)，再绘制，最后 mpython_display_Show。",
+    "【循环刷新】在事件/主循环里持续更新显示时，每一轮重画后都要再放一个 mpython_display_Show；否则只显示第一帧。",
+    "【初始化】程序开始建议先清屏(mpython_display_fill 清空 + mpython_display_Show)，再进入主逻辑。",
+    "【v3 LCD/LVGL】v3 控件更新会自动刷新，无需手动 Show；不要在 v3 上用 OLED 的 DispChar/Show 积木。",
+    "【主循环】while 一直循环里要放等待积木(mpython_sleep_ms)，避免空转。",
+    "【事件回调】事件积木(如 mpython_Interrupt_AB)的体里不要放长时间等待/阻塞积木。"
+  ]
+}

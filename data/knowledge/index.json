@@ -1,0 +1,27 @@
+{
+  "builtFrom": "/home/frez79/HandPy-Skill/skills/handpy",
+  "core": "core.json",
+  "triggers": "triggers.json",
+  "antipatterns": "antipatterns.json",
+  "docs": [
+    "common.md",
+    "v2.md",
+    "v3.md",
+    "patterns.md",
+    "tool.md"
+  ],
+  "modules": [
+    "bluebit.md",
+    "hcsr04.md",
+    "images.md",
+    "ir_remote.md",
+    "lv_gui.md",
+    "mpython_ble.md",
+    "parrot.md",
+    "servo.md",
+    "siot.md",
+    "smartcamera.md",
+    "xunfei.md"
+  ],
+  "groupVersion": "group-version.json"
+}

@@ -1,0 +1,21 @@
+{
+  "_note": "Keyword triggers for on-demand (L4) knowledge loading. Matched against the user's Chinese request. Maps to dist/knowledge/<doc>.",
+  "version": {
+    "v2": ["v2", "oled", "dispchar", "单色屏", "单色 oled", "esp32(非s3)", "黑白屏"],
+    "v3": ["v3", "lcd", "彩色屏", "彩屏", "lvgl", "lv_gui", "lv_displayer", "esp32-s3", "esp32s3", "s3"]
+  },
+  "modules": {
+    "siot.md": ["siot", "mqtt", "物联网", "订阅", "发布", "topic"],
+    "hcsr04.md": ["超声", "超声波", "测距", "距离", "hcsr04", "ultrasonic"],
+    "ir_remote.md": ["红外", "遥控", "ir", "infrared"],
+    "smartcamera.md": ["摄像头", "相机", "人脸", "识别", "yolo", "二维码", "camera", "k210", "k230", "视觉", "目标检测"],
+    "servo.md": ["舵机", "servo", "角度"],
+    "parrot.md": ["拓展板", "扩展板", "电机", "小车", "parrot", "马达"],
+    "bluebit.md": ["bluebit", "扩展模块", "sht20", "温湿度", "颜色识别"],
+    "xunfei.md": ["讯飞", "语音识别", "语音合成", "tts", "asr", "xunfei"],
+    "mpython_ble.md": ["ble", "蓝牙", "bluetooth", "ibeacon", "hid", "手柄"],
+    "lv_gui.md": ["lvgl", "lv_gui", "gui", "页面", "界面", "彩屏界面"],
+    "images.md": ["图片", "表情", "图标", "bitmap", "pbm", "png", "动画"]
+  },
+  "_version_docs": { "v2": "v2.md", "v3": "v3.md", "common": "common.md", "patterns": "patterns.md" }
+}

@@ -1,0 +1,42 @@
+{
+  "name": "mpython3-ide-enhanced",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "为 online.mpython.cn 打造的 AI 图形化编程书签：用中文描述需求，LLM 生成 Blockly 积木并注入工作区",
+  "license": "AGPL-3.0-or-later",
+  "homepage": "https://github.com/FET-CN/mPython3-IDE-Enhanced#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FET-CN/mPython3-IDE-Enhanced.git"
+  },
+  "bugs": {
+    "url": "https://github.com/FET-CN/mPython3-IDE-Enhanced/issues"
+  },
+  "keywords": [
+    "mpython",
+    "handpy",
+    "掌控板",
+    "blockly",
+    "llm",
+    "ai",
+    "bookmarklet",
+    "graphical-programming"
+  ],
+  "scripts": {
+    "build:catalog": "bun tools/build-catalog.mjs",
+    "build:knowledge": "bun tools/build-knowledge.mjs",
+    "build:bookmarklet": "bun tools/build-bookmarklet.mjs",
+    "build": "bun run build:catalog && bun run build:knowledge && bun run build:bookmarklet",
+    "test": "bunx vitest run",
+    "test:watch": "bunx vitest",
+    "e2e:inject": "bun e2e/inject.e2e.mjs",
+    "e2e:patch": "bun e2e/patch.e2e.mjs",
+    "eval": "bun eval/run-eval.mjs"
+  },
+  "devDependencies": {
+    "linkedom": "^0.18.5",
+    "playwright": "^1.61.1",
+    "vitest": "^2.1.8"
+  }
+}

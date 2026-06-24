@@ -1,0 +1,13 @@
+{
+  "_note": "T3 eval tasks: Chinese NL request → run full pipeline → score (validator pass + compile). Behavioral (simulator run) is optional/live.",
+  "tasks": [
+    { "id": "btn-oled", "request": "按 A 键时在 OLED 屏幕 (0,0) 显示 Hello" },
+    { "id": "rgb-loop", "request": "重复 5 次，把 0 号 RGB 灯设成绿色，每次等待 200 毫秒" },
+    { "id": "if-display", "request": "如果按键 B 被按下，就在屏幕显示 ON，否则显示 OFF" },
+    { "id": "light-sensor", "request": "一直循环读取光线值并显示在屏幕上" },
+    { "id": "accel", "request": "当板子倾斜（加速度 X 大于 0.5）时点亮所有 RGB 灯为红色" },
+    { "id": "buzzer", "request": "按 A 键播放一个 440 赫兹的声音持续 500 毫秒" },
+    { "id": "counter", "request": "用一个变量计数，每次按 A 键加一，并把计数显示在屏幕上" },
+    { "id": "touch", "request": "当触摸 P 时显示 touched" }
+  ]
+}

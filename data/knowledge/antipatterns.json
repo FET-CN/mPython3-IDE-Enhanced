@@ -1,0 +1,11 @@
+{
+  "_note": "面向图形化积木的反模式提醒(不含 Python 文本语法)。",
+  "rules": [
+    { "id": "callback_sleep", "zh": "事件积木(如 mpython_Interrupt_AB)的体里不要放长等待/阻塞积木，耗时逻辑放主循环" },
+    { "id": "busy_wait", "zh": "一直循环/等待循环体里必须放等待积木(mpython_sleep_ms)，避免空转占满 CPU" },
+    { "id": "missing_show", "zh": "v2 OLED 绘制后忘了放 mpython_display_Show(显示生效) → 屏幕不更新；每次重画后都要有它" },
+    { "id": "loop_no_show", "zh": "循环里更新显示却只在循环外放了一次显示生效 → 只显示第一帧" },
+    { "id": "mix_board_blocks", "zh": "不要混用别的板子或别版本的积木(如在 v2 上用 v3 LCD 积木)" },
+    { "id": "no_debounce", "zh": "按键/触摸判断要去抖，避免一次抖动触发多次" }
+  ]
+}

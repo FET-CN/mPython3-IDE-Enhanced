@@ -1,0 +1,48 @@
+# Build the hostable dist/ from committed data/ and publish it to GitHub Pages.
+# No private build-time data is required — build:bookmarklet only needs src/ + data/.
+# Enable: repo Settings → Pages → Source = "GitHub Actions". Then install from
+#   https://<owner>.github.io/<repo>/install.html
+name: Deploy bookmarklet to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Compute Pages base URL
+        run: |
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          repo="${{ github.event.repository.name }}"
+          echo "M3E_HOST_BASE=https://${owner}.github.io/${repo}" >> "$GITHUB_ENV"
+      - name: Assemble dist/ (catalog + knowledge + bundle)
+        run: bun run build:bookmarklet
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

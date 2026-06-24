@@ -1,0 +1,90 @@
+{
+  "_note": "Few-shot seeds (intent → IR). Validated at build time against the catalog (tools/build-catalog must run first; see test/unit/fewshot.spec.mjs).",
+  "seeds": [
+    {
+      "intent": "按 A 键时在 OLED 屏 (0,0) 显示 Hello",
+      "ir": [
+        [
+          {
+            "type": "mpython_Interrupt_AB",
+            "fields": { "button": "button_a", "action": "down" },
+            "statements": {
+              "DO": [
+                {
+                  "type": "mpython_display_DispChar",
+                  "inputs": {
+                    "x": { "type": "math_number", "fields": { "NUM": "0" } },
+                    "y": { "type": "math_number", "fields": { "NUM": "0" } },
+                    "message": { "type": "text", "fields": { "TEXT": "Hello" } }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      ]
+    },
+    {
+      "intent": "重复 3 次：把 0 号 RGB 灯设为红色，等待 0.5 秒",
+      "ir": [
+        [
+          {
+            "type": "controls_repeat_ext",
+            "inputs": { "TIMES": { "type": "math_number", "fields": { "NUM": "3" } } },
+            "statements": {
+              "DO": [
+                {
+                  "type": "mpython_set_RGB",
+                  "inputs": {
+                    "num": { "type": "math_number", "fields": { "NUM": "0" } },
+                    "r": { "type": "math_number", "fields": { "NUM": "255" } },
+                    "g": { "type": "math_number", "fields": { "NUM": "0" } },
+                    "b": { "type": "math_number", "fields": { "NUM": "0" } }
+                  }
+                },
+                {
+                  "type": "mpython_sleep_ms",
+                  "fields": { "ms_us": "ms" },
+                  "inputs": { "duration": { "type": "math_number", "fields": { "NUM": "500" } } }
+                }
+              ]
+            }
+          }
+        ]
+      ]
+    },
+    {
+      "intent": "如果按键 A 被按下就在 (0,0) 显示 1，否则显示 0（演示 if/else 与布尔表达式）",
+      "ir": [
+        [
+          {
+            "type": "controls_if",
+            "inputs": { "IF0": { "type": "mpython_button_is_pressed", "fields": { "button": "a" } } },
+            "statements": {
+              "DO0": [
+                {
+                  "type": "mpython_display_DispChar",
+                  "inputs": {
+                    "x": { "type": "math_number", "fields": { "NUM": "0" } },
+                    "y": { "type": "math_number", "fields": { "NUM": "0" } },
+                    "message": { "type": "text", "fields": { "TEXT": "1" } }
+                  }
+                }
+              ],
+              "ELSE": [
+                {
+                  "type": "mpython_display_DispChar",
+                  "inputs": {
+                    "x": { "type": "math_number", "fields": { "NUM": "0" } },
+                    "y": { "type": "math_number", "fields": { "NUM": "0" } },
+                    "message": { "type": "text", "fields": { "TEXT": "0" } }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      ]
+    }
+  ]
+}
