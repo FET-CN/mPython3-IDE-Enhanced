@@ -1,7 +1,7 @@
 # Build the hostable dist/ from committed data/ and publish it to GitHub Pages.
 # No private build-time data is required — build:bookmarklet only needs src/ + data/.
 # Enable: repo Settings → Pages → Source = "GitHub Actions". Then install from
-#   https://<owner>.github.io/<repo>/install.html
+#   https://m3e.flowecho.org/install.html
 name: Deploy bookmarklet to GitHub Pages
 
 on:
@@ -25,11 +25,8 @@ jobs:
       - uses: actions/checkout@v6
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      - name: Compute Pages base URL
-        run: |
-          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          repo="${{ github.event.repository.name }}"
-          echo "M3E_HOST_BASE=https://${owner}.github.io/${repo}" >> "$GITHUB_ENV"
+      - name: Set Pages base URL
+        run: echo "M3E_HOST_BASE=https://m3e.flowecho.org" >> "$GITHUB_ENV"
       - name: Assemble dist/ (catalog + knowledge + bundle)
         run: bun run build:bookmarklet
       - uses: actions/upload-pages-artifact@v5
