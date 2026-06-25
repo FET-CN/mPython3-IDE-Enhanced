@@ -4,6 +4,7 @@ import { readWorkspaceTool } from "./readWorkspace.mjs";
 import { searchBlocksTool } from "./searchBlocks.mjs";
 import { editBlocksTool } from "./editBlocks.mjs";
 import { runCodeTool } from "./runCode.mjs";
+import { askUserTool } from "./askUser.mjs";
 import { thinkTool } from "./think.mjs";
 import { updateTodosTool } from "./updateTodos.mjs";
 
@@ -12,6 +13,7 @@ export const ALL_TOOLS = [
   searchBlocksTool,
   editBlocksTool,
   runCodeTool,
+  askUserTool,
   thinkTool,
   updateTodosTool,
 ];

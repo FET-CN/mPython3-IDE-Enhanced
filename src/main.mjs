@@ -27,6 +27,7 @@ const TOOL_META = {
   search_blocks: { icon: "search", label: "检索积木" },
   edit_blocks: { icon: "edit", label: "修改积木", confirmTitle: "应用积木修改？" },
   run_code: { icon: "run", label: "运行程序", confirmTitle: "在掌控板上运行当前程序？" },
+  ask_user: { icon: "help", label: "请用户澄清" },
   think: { icon: "think", label: "思考" },
   update_todos: { icon: "todos", label: "更新任务清单" },
 };
@@ -167,7 +168,7 @@ async function boot() {
         messages: history.messages(),
         tools: ALL_TOOLS,
         client,
-        ctx: { caps, data, board, version, session, confirm: confirmTool },
+        ctx: { caps, data, board, version, session, confirm: confirmTool, ask: (q) => panel.ask(q) },
         onEvent: ui.onEvent,
         signal: currentAbort.signal,
       });
@@ -222,7 +223,7 @@ async function boot() {
             panel.setTodos(ev.todos);
             break;
           case "tool_start": {
-            if (ev.name === "think" || ev.name === "update_todos") break; // dedicated events render these
+            if (ev.name === "think" || ev.name === "update_todos" || ev.name === "ask_user") break; // these render their own UI
             const meta = TOOL_META[ev.name] || { icon: "·", label: ev.name };
             const sub = ev.name === "search_blocks" && ev.args?.query ? "：" + ev.args.query : "";
             const card = panel.toolCard({ icon: meta.icon, title: meta.label + sub });

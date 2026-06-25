@@ -244,6 +244,44 @@ export function createPanel(opts = {}) {
     scrollToEnd();
   }
 
+  /** Inline structured question → resolves to the chosen label (single) or an
+   *  array of labels (multi), or null if dismissed. Mirrors the confirm card. */
+  function ask({ question, options = [], multi = false }) {
+    return new Promise((resolve) => {
+      const card = div("rounded-lg bg-blue-500/10 p-2.5 ring-1 ring-blue-500/30");
+      const opts = options.map((o, i) => {
+        const desc = o.description ? `<div class="mt-0.5 text-[11px] text-zinc-400">${esc(o.description)}</div>` : "";
+        return `<button data-o="${i}" aria-pressed="false" class="w-full rounded-lg bg-white/5 px-2.5 py-1.5 text-left text-[12px] text-zinc-200 ring-1 ring-transparent hover:bg-white/10 aria-pressed:bg-blue-600/30 aria-pressed:ring-blue-500/40"><span class="font-medium text-zinc-100">${esc(o.label)}</span>${desc}</button>`;
+      }).join("");
+      card.innerHTML =
+        `<div class="text-[12.5px] font-medium text-blue-200">${esc(question)}</div>` +
+        `<div data-opts class="mt-2 flex flex-col gap-1.5">${opts}</div>` +
+        (multi ? `<button data-submit class="mt-2 self-end rounded-lg bg-blue-600 px-2.5 py-1 text-[12px] font-medium text-white hover:bg-blue-500 disabled:bg-white/5 disabled:text-zinc-600" disabled>提交</button>` : "");
+      append(card);
+
+      const chosen = new Set();
+      const finish = (labels) => {
+        card.querySelectorAll("button").forEach((b) => (b.disabled = true));
+        card.className = "rounded-lg bg-zinc-900/60 p-2.5 ring-1 ring-white/10";
+        const shown = labels && labels.length ? labels.join("、") : "（已关闭）";
+        card.innerHTML = `<div class="text-[12px] text-zinc-400">${esc(question)} — ${esc(shown)}</div>`;
+        resolve(labels && labels.length ? (multi ? labels : labels[0]) : null);
+      };
+      card.addEventListener("click", (e) => {
+        const btn = e.target.closest?.("button");
+        if (!btn) return;
+        if (btn.hasAttribute("data-submit")) { finish([...chosen].map((i) => options[i].label)); return; }
+        const i = btn.getAttribute("data-o");
+        if (i == null) return;
+        if (!multi) { finish([options[+i].label]); return; }
+        const on = !chosen.has(+i);
+        on ? chosen.add(+i) : chosen.delete(+i);
+        btn.setAttribute("aria-pressed", String(on));
+        card.querySelector("[data-submit]").disabled = chosen.size === 0;
+      });
+    });
+  }
+
   /** Inline confirmation card → resolves 'once' | 'session' | false. */
   function confirm({ title, detail }) {
     return new Promise((resolve) => {
@@ -324,7 +362,7 @@ export function createPanel(opts = {}) {
   return {
     host, root,
     // view primitives
-    addUser, notice, beginAssistant, toolCard, setTodos, confirm,
+    addUser, notice, beginAssistant, toolCard, setTodos, confirm, ask,
     // header / status
     setBoard, setStatus, setBusy, setHidden, setGenerateEnabled, loadConfig,
     openSettings: () => settings.classList.remove("hidden"),

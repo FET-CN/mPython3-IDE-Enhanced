@@ -119,3 +119,45 @@ describe("planEdit (pure)", () => {
     expect(r.feedback.length).toBeGreaterThan(0);
   });
 });
+
+describe("ask_user tool", () => {
+  it("blocks on ctx.ask and returns the user's choice as the tool result", async () => {
+    const { askUserTool } = await import("../../src/agent/tools/askUser.mjs");
+    const options = [{ label: "掌控板V3" }, { label: "掌控板V2" }];
+    const ask = async (q) => { expect(q.options).toHaveLength(2); return "掌控板V3"; };
+    const out = await askUserTool.run({ question: "目标板型？", options }, { ask });
+    expect(out.is_error).toBeFalsy();
+    expect(out.content).toContain("掌控板V3");
+  });
+
+  it("joins multi-select labels", async () => {
+    const { askUserTool } = await import("../../src/agent/tools/askUser.mjs");
+    const out = await askUserTool.run(
+      { question: "要哪些功能？", options: [{ label: "A" }, { label: "B" }], multi_select: true },
+      { ask: async () => ["A", "B"] },
+    );
+    expect(out.content).toContain("A、B");
+  });
+
+  it("degrades gracefully when the user dismisses the question", async () => {
+    const { askUserTool } = await import("../../src/agent/tools/askUser.mjs");
+    const out = await askUserTool.run(
+      { question: "x", options: [{ label: "A" }, { label: "B" }] },
+      { ask: async () => null },
+    );
+    expect(out.is_error).toBeFalsy();
+    expect(out.content).toContain("未选择");
+  });
+
+  it("errors when fewer than two options are provided", async () => {
+    const { askUserTool } = await import("../../src/agent/tools/askUser.mjs");
+    const out = await askUserTool.run({ question: "x", options: [{ label: "only" }] }, { ask: async () => "only" });
+    expect(out.is_error).toBe(true);
+  });
+
+  it("is serial (not read-only) and never gated behind the write-confirm dialog", async () => {
+    const { askUserTool } = await import("../../src/agent/tools/askUser.mjs");
+    expect(askUserTool.isReadOnly).toBe(false);
+    expect(askUserTool.needsConfirm).toBe(false);
+  });
+});
