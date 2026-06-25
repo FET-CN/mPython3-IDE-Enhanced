@@ -7,7 +7,7 @@
 
 import { expandOps } from "../../ir/expr.mjs";
 import { annotateIds, applyOps } from "../../host/ops.mjs";
-import { readWorkspaceIR } from "../../host/read.mjs";
+import { readWorkspaceIR, readPyCode } from "../../host/read.mjs";
 import { snapshot, injectOps } from "../../host/inject.mjs";
 import { renderRepairFeedback } from "../../ctx/assemble.mjs";
 
@@ -70,6 +70,14 @@ export const editBlocksTool = {
       return { is_error: true, content: "注入算子有误：" + (inj.errors || []).map((e) => e.detail).join("；") };
     }
     ctx?.emit?.({ type: "applied", ops: plan.ops, blockCount: inj.blockCount, ir: plan.result });
-    return { content: `已应用编辑，工作区现有 ${inj.blockCount ?? "?"} 个积木。`, display: { blockCount: inj.blockCount } };
+
+    // Echo the freshly-generated Python so the model can review the *actual*
+    // converted code before finishing, and self-correct if something looks off.
+    const py = readPyCode(caps);
+    const parts = [`已应用编辑，工作区现有 ${inj.blockCount ?? "?"} 个积木。`];
+    if (py && py.trim()) {
+      parts.push("转换后的 Python（请在收尾前据此自检逻辑/缩进/API 是否正确，有问题就再次 edit_blocks 修正）：\n```python\n" + py.trim() + "\n```");
+    }
+    return { content: parts.join("\n\n"), display: { blockCount: inj.blockCount } };
   },
 };
