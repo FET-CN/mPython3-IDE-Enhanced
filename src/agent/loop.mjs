@@ -4,6 +4,7 @@
 // and recurses until the model answers with no tool calls. AbortSignal aware.
 
 import { toToolSpecs } from "./tools/index.mjs";
+import { log, clip, contextText } from "../runtime/log.mjs";
 
 const MAX_STEPS = 16;
 const MAX_CONCURRENCY = 6;
@@ -30,6 +31,11 @@ export async function runAgentTurn(o) {
     if (signal?.aborted) return { messages, final: null, steps: step, stopped: "aborted" };
 
     emit({ type: "assistant_start", step });
+    log.group(`第 ${step + 1} 步 · 装配上下文（${messages.length} 条 / ${specs.length} 个工具）`, () => {
+      log.debug("messages（发送给模型的数组）", messages);
+      log.debug("文本预览\n" + contextText(messages));
+      log.debug("可用工具", specs.map((s) => s.function?.name));
+    });
     const res = await client.stream(messages, {
       tools: specs,
       signal,
@@ -40,8 +46,17 @@ export async function runAgentTurn(o) {
     if (res.tool_calls?.length) assistantMsg.tool_calls = res.tool_calls;
     messages.push(assistantMsg);
     emit({ type: "assistant_done", content: res.content || "", tool_calls: res.tool_calls || [] });
+    log.group(`第 ${step + 1} 步 · 模型回复`, () => {
+      log.debug("文本", clip(res.content || "(空)"));
+      if (res.tool_calls?.length) {
+        log.debug("工具调用", res.tool_calls.map((c) => ({ name: c.function?.name, arguments: c.function?.arguments })));
+      } else {
+        log.debug("无工具调用（本轮结束）");
+      }
+    });
 
     if (!res.tool_calls?.length) {
+      log.info(`本轮结束（${step + 1} 步）`);
       return { messages, final: res.content || "", steps: step + 1, stopped: "done" };
     }
 
@@ -68,13 +83,14 @@ async function executeCall(call, byName, ctx) {
   const tool = byName.get(name);
   const toolMsg = (content) => ({ role: "tool", tool_call_id: id, name, content: String(content ?? "") });
 
-  if (!tool) return toolMsg(`未知工具：${name}`);
+  if (!tool) { log.debug(`未知工具：${name}`); return toolMsg(`未知工具：${name}`); }
 
   let args = {};
   try {
     const raw = call.function?.arguments;
     args = raw ? JSON.parse(raw) : {};
   } catch (e) {
+    log.debug(`工具 ${name} 参数解析失败`, clip(call.function?.arguments));
     return toolMsg(`工具参数不是合法 JSON：${e.message}`);
   }
 
@@ -84,20 +100,26 @@ async function executeCall(call, byName, ctx) {
     try { decision = await ctx.confirm(tool, args); } catch { decision = false; }
     if (decision === "session") ctx.session?.approvals?.add(tool.name);
     if (!decision) {
+      log.info(`工具 ${name} 被用户拒绝`);
       ctx.emit?.({ type: "tool_rejected", name });
       return toolMsg("用户拒绝了该操作。请改用其他方式或先征求用户意见。");
     }
   }
 
   ctx.emit?.({ type: "tool_start", name, args });
-  try {
-    const out = await tool.run(args, ctx);
-    ctx.emit?.({ type: "tool_result", name, is_error: !!out?.is_error, display: out?.display });
-    return toolMsg(out?.content);
-  } catch (e) {
-    ctx.emit?.({ type: "tool_result", name, is_error: true });
-    return toolMsg(`工具执行异常：${e?.message || String(e)}`);
-  }
+  return log.group(`工具 ${name}`, async () => {
+    log.debug("参数", args);
+    try {
+      const out = await tool.run(args, ctx);
+      ctx.emit?.({ type: "tool_result", name, is_error: !!out?.is_error, display: out?.display });
+      log.debug(out?.is_error ? "结果（错误）" : "结果", clip(out?.content));
+      return toolMsg(out?.content);
+    } catch (e) {
+      ctx.emit?.({ type: "tool_result", name, is_error: true });
+      log.debug("执行异常", e?.message || String(e));
+      return toolMsg(`工具执行异常：${e?.message || String(e)}`);
+    }
+  });
 }
 
 /** Run async `fn` over items with bounded concurrency, preserving order. */

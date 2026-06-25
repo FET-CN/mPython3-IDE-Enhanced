@@ -18,6 +18,7 @@ import { createHistory } from "./agent/history.mjs";
 import { runAgentTurn } from "./agent/loop.mjs";
 import { ALL_TOOLS } from "./agent/tools/index.mjs";
 import { parseSlash, commandPrompt, COMMANDS, helpText } from "./agent/commands.mjs";
+import { log } from "./runtime/log.mjs";
 
 // Human-facing titles for tool cards / confirmation prompts.
 const TOOL_META = {
@@ -154,6 +155,7 @@ async function boot() {
     const n = countBlocks(readWorkspaceIR(caps));
     const hint = n ? `（当前工作区约 ${n} 个积木；编辑前请调用 read_workspace 获取精确结构与 id）` : "（当前工作区为空）";
     history.addUser(`${content}\n${hint}`);
+    log.info("用户输入", { 需求: content, 工作区积木数: n });
 
     currentAbort = new AbortController();
     panel.setBusy(true);
