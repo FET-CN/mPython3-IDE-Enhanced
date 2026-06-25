@@ -19,25 +19,84 @@ const ICON = {
 
 const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 
-/** Minimal, safe markdown: fenced code blocks, inline code, paragraphs. */
+/** Lightweight, safe Markdown → HTML. Handles fenced code blocks at the top
+ *  level; within prose: ATX headings, blockquotes, ordered/unordered lists,
+ *  horizontal rules, paragraphs, and inline spans (code/bold/italic/strike/link).
+ *  All text is HTML-escaped before any markup is introduced. */
 function renderMarkdown(text) {
   const parts = String(text).split(/```(\w*)\n?([\s\S]*?)```/g);
   let html = "";
   for (let i = 0; i < parts.length; i += 3) {
-    const prose = parts[i];
-    if (prose) {
-      html += prose
-        .split(/\n{2,}/)
-        .map((p) => `<p>${inlineMd(p)}</p>`)
-        .join("");
-    }
+    if (parts[i]) html += renderProse(parts[i]);
     const code = parts[i + 2];
     if (code != null) html += `<pre><code>${esc(code.replace(/\n$/, ""))}</code></pre>`;
   }
   return html;
 }
+
+function renderProse(src) {
+  const lines = String(src).replace(/\n$/, "").split("\n");
+  let out = "";
+  let para = [];
+  let list = null; // { tag: 'ul'|'ol', items: [] }
+  let quote = null; // string[]
+  const flushPara = () => { if (para.length) { out += `<p class="my-1">${para.map(inlineMd).join("<br>")}</p>`; para = []; } };
+  const flushList = () => {
+    if (!list) return;
+    const cls = list.tag === "ol" ? "my-1 list-decimal pl-5 space-y-0.5" : "my-1 list-disc pl-5 space-y-0.5";
+    out += `<${list.tag} class="${cls}">${list.items.map((it) => `<li>${inlineMd(it)}</li>`).join("")}</${list.tag}>`;
+    list = null;
+  };
+  const flushQuote = () => {
+    if (!quote) return;
+    out += `<blockquote class="my-1 border-l-2 border-white/15 pl-3 text-zinc-400">${quote.map(inlineMd).join("<br>")}</blockquote>`;
+    quote = null;
+  };
+  const flushAll = () => { flushPara(); flushList(); flushQuote(); };
+
+  for (const raw of lines) {
+    const line = raw.replace(/\s+$/, "");
+    if (!line.trim()) { flushAll(); continue; }
+
+    let m;
+    if ((m = /^(#{1,6})\s+(.*)$/.exec(line))) {
+      flushAll();
+      const lvl = m[1].length;
+      const size = lvl <= 1 ? "text-[15px]" : lvl === 2 ? "text-[14px]" : "text-[13px]";
+      out += `<div class="${size} font-semibold text-zinc-100 mt-2 mb-1">${inlineMd(m[2])}</div>`;
+    } else if (/^(\s*)([-*_])(\s*\2){2,}\s*$/.test(line)) {
+      flushAll();
+      out += `<hr class="my-2 border-white/10">`;
+    } else if ((m = /^\s*>\s?(.*)$/.exec(line))) {
+      flushPara(); flushList();
+      (quote ||= []).push(m[1]);
+    } else if ((m = /^\s*[-*+]\s+(.*)$/.exec(line))) {
+      flushPara(); flushQuote();
+      if (!list || list.tag !== "ul") { flushList(); list = { tag: "ul", items: [] }; }
+      list.items.push(m[1]);
+    } else if ((m = /^\s*\d+[.)]\s+(.*)$/.exec(line))) {
+      flushPara(); flushQuote();
+      if (!list || list.tag !== "ol") { flushList(); list = { tag: "ol", items: [] }; }
+      list.items.push(m[1]);
+    } else {
+      flushList(); flushQuote();
+      para.push(line);
+    }
+  }
+  flushAll();
+  return out;
+}
+
+/** Inline spans on a single text run. Escapes first, then layers markup. */
 function inlineMd(s) {
-  return esc(s).replace(/`([^`]+)`/g, '<code class="rounded bg-white/10 px-1 py-0.5 text-[12px]">$1</code>').replace(/\n/g, "<br>");
+  let h = esc(s);
+  h = h.replace(/`([^`]+)`/g, '<code class="rounded bg-white/10 px-1 py-0.5 text-[12px]">$1</code>');
+  h = h.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+|mailto:[^\s)]+)\)/g,
+    '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-blue-400 underline underline-offset-2 hover:text-blue-300">$1</a>');
+  h = h.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>").replace(/__([^_]+)__/g, "<strong>$1</strong>");
+  h = h.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+  h = h.replace(/~~([^~]+)~~/g, "<del>$1</del>");
+  return h;
 }
 
 export function createPanel(opts = {}) {
