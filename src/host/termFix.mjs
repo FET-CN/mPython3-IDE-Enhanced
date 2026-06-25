@@ -17,6 +17,10 @@
 // 修复：检测到终端孤立时，临时 stub 掉 clearFn、用包装的构造器强制等宽字体，走站点自己的
 // `resetTerm` 重挂（保留 onData 键盘绑定），再重测字宽 + resize。挂 MutationObserver 兜底，
 // 之后每次模式切换/面板重建都自动自愈。全程 try/catch，绝不影响页面其余功能。
+//
+// 另加一处永久护栏：把 `$serial.clearFn` 包成「无 $socket 时空操作」。站点自身在夜间模式开关 /
+// 模式切换时也会调 `resetTerm`→`clearFn`，本地串口模式下本会崩并把终端 dispose 后无法重建
+// （正是「夜间模式常开 → 控制台出生即空白」的根因）；护栏让站点自己的 resetTerm 也不再崩。
 
 // 站点全局是比例字体（思源黑体），这里钉死一组跨平台等宽字体，xterm 才能按固定单元格正确排版。
 const MONO = "'DejaVu Sans Mono', 'Cascadia Mono', 'Consolas', 'Menlo', 'Courier New', monospace";
@@ -28,6 +32,23 @@ function isOrphan(doc, term) {
   if (!term) return false; // 尚未创建：交给站点自己首建，不算孤立
   const el = term.element;
   return !el || !doc.contains(el);
+}
+
+/**
+ * 永久护栏：让 `$serial.clearFn` 在无 `$socket` 时安全空操作。
+ * 站点实现是 `this.$socket.emit("clearFn")`，`$socket` 仅云端 socket.io 模式存在；
+ * 浏览器 Web Serial（USB 直连）模式下会抛 `reading 'emit' of undefined`，使站点自身的
+ * `resetTerm`（夜间模式开关 / 模式切换触发）在 dispose 终端后中断、无法重建。幂等。
+ */
+function guardClearFn(vm) {
+  const ser = vm.$serial;
+  if (!ser || typeof ser.clearFn !== "function" || ser.__m3eClearGuarded) return;
+  const orig = ser.clearFn;
+  ser.clearFn = function (...a) {
+    if (!this.$socket) return; // 无 socket：空操作而非抛错
+    return orig.apply(this, a);
+  };
+  ser.__m3eClearGuarded = true;
 }
 
 /** 用站点自己的 resetTerm 重挂某个终端，并强制等宽字体 + 重测字宽。 */
@@ -82,6 +103,9 @@ export function installTerminalFix(caps) {
   }
 
   let healedFont = false; // 首次无论是否孤立，都重挂一遍以套用等宽字体
+
+  // 永久护栏：先让站点自身的 resetTerm 在本地串口模式下不再崩（夜间模式/模式切换路径）。
+  try { guardClearFn(vm); } catch {}
 
   function heal() {
     try {
