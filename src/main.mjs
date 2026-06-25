@@ -8,6 +8,7 @@ import { detectHost } from "./host/hostBridge.mjs";
 import { readWorkspaceIR } from "./host/read.mjs";
 import { snapshot, restore } from "./host/inject.mjs";
 import { createLock } from "./host/lock.mjs";
+import { installSerialProxy } from "./host/serialProxy.mjs";
 import { createPanel } from "./ui/panel.mjs";
 import { loadData, cfg } from "./runtime/data.mjs";
 import { makeClient } from "./llm/client.mjs";
@@ -48,9 +49,9 @@ async function boot() {
   const panel = createPanel({
     onSend: ({ text }) => handleInput(text),
     onStop: () => currentAbort?.abort(),
-    onSaveConfig: (c) => { for (const k in c) cfg.set(k, c[k]); panel.setStatus("设置已保存", "ok"); rebuildClient(); },
+    onSaveConfig: (c) => { for (const k in c) cfg.set(k, c[k]); panel.setStatus("设置已保存", "ok"); rebuildClient(); setupSerialProxy(); },
   });
-  panel.loadConfig(cfg.llm());
+  panel.loadConfig({ ...cfg.llm(), serialProxy: cfg.get("serialProxy", "") });
 
   const session = { lastSnapshot: null, todos: [], approvals: new Set() };
   let data = null;
@@ -59,6 +60,7 @@ async function boot() {
   let currentAbort = null;
   let board = boardFromMaster(currentMaster());
   let version = "unknown";
+  let serialProxy = null;
 
   window.__m3e__ = { focus: () => panel.setHidden(false), panel, caps, session };
 
@@ -76,8 +78,34 @@ async function boot() {
     return board;
   }
 
+  // 多个串口时，让用户在面板里选一个（替代浏览器原生的串口选择弹窗）。
+  async function pickSerialPort(ports) {
+    if (!ports?.length) return null;
+    panel.setHidden(false);
+    const options = ports.map((p) => ({
+      label: p.path,
+      description: [p.manufacturer, p.isBoard ? "掌控板" : "", p.vid ? `${p.vid}:${p.pid}` : ""].filter(Boolean).join(" · "),
+    }));
+    const chosen = await panel.ask({ question: "选择要连接的串口", options });
+    return chosen ? ports.find((p) => p.path === chosen) : null;
+  }
+
+  // 按配置安装/重连本地串口代理（navigator.serial 垫片）。留空则不接管，走浏览器原生。
+  async function setupSerialProxy() {
+    if (serialProxy) { try { serialProxy.close(); } catch {} serialProxy = null; }
+    const url = cfg.get("serialProxy", "").trim();
+    if (!url) return;
+    try {
+      serialProxy = await installSerialProxy({ url, onStatus: (m, k) => panel.setStatus(m, k), pickPort: pickSerialPort });
+      panel.notice("串口代理已连接：" + url + "（网站「连接设备」将走本地代理）", "ok");
+    } catch (e) {
+      panel.notice("串口代理未连接（" + (e?.message || e) + "）。请先启动本地 agent：uv run serial-proxy/m3e_serial_proxy.py", "err");
+    }
+  }
+
   rebuildClient();
   refreshBoard();
+  setupSerialProxy();
   panel.notice("正在加载积木知识库…");
   try {
     data = await loadData();

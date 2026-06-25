@@ -61,6 +61,17 @@ bunx serve dist --cors -l 8080
 #### 用 GitHub Pages 一键托管（推荐）
 本仓库自带 `.github/workflows/pages.yml`：**Fork 后在仓库 Settings → Pages 选择 “GitHub Actions”**，推送即自动构建并发布 `dist/`，托管基址自动设为你的 Pages 地址。访问 `https://<你的用户名>.github.io/mPython3-IDE-Enhanced/install.html` 安装。
 
+#### 在 Firefox / Safari 上连接掌控板（本地串口代理）
+`online.mpython.cn` 的「连接设备 / 运行 / 烧录」依赖浏览器 **Web Serial API**，目前只有 Chromium 系支持。
+本仓库提供 `serial-proxy/`——一个用 **uv** 跑的本地串口代理：书签注入的 `navigator.serial` 垫片把串口操作经
+**WebSocket** 转发给它，由 `pyserial` 持有真实串口。这样 **Firefox / Safari** 也能用。
+
+1. 启动代理（无需安装）：`uv run serial-proxy/m3e_serial_proxy.py`（默认 `ws://127.0.0.1:8765`）。
+2. 书签面板 ⚙ 里把 **「串口代理地址」** 填成 `ws://127.0.0.1:8765` → 保存。
+3. 回到网站点「连接设备」即可——串口将走本地代理（多个串口时会在面板里让你选）。
+
+留空该地址则不接管，仍用浏览器原生 Web Serial（Chrome）。详见 [`serial-proxy/README.md`](serial-proxy/README.md)。
+
 ---
 
 ## 数据与构建

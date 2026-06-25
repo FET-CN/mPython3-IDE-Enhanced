@@ -144,6 +144,8 @@ export function createPanel(opts = {}) {
           <input id="m3e-key" name="apiKey" data-cfg="apiKey" type="password" placeholder="sk-..." class="rounded-lg bg-black/40 px-2.5 py-2 text-[12.5px] text-zinc-100 ring-1 ring-white/10 placeholder:text-zinc-500 focus-visible:outline-2 focus-visible:outline-blue-500">
           <label class="text-xs text-zinc-400" for="m3e-model">模型</label>
           <input id="m3e-model" name="model" data-cfg="model" placeholder="deepseek-chat" class="rounded-lg bg-black/40 px-2.5 py-2 text-[12.5px] text-zinc-100 ring-1 ring-white/10 placeholder:text-zinc-500 focus-visible:outline-2 focus-visible:outline-blue-500">
+          <label class="text-xs text-zinc-400" for="m3e-serial">串口代理地址（Firefox 等用，留空则用浏览器原生）</label>
+          <input id="m3e-serial" name="serialProxy" data-cfg="serialProxy" placeholder="ws://127.0.0.1:8765" class="rounded-lg bg-black/40 px-2.5 py-2 text-[12.5px] text-zinc-100 ring-1 ring-white/10 placeholder:text-zinc-500 focus-visible:outline-2 focus-visible:outline-blue-500">
           <button data-act="saveCfg" type="button" class="mt-1 self-end rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500">保存设置</button>
         </div>
 

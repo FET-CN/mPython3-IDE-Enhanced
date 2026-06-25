@@ -21,6 +21,7 @@
 - `bun run verify` —— 提交前快速验证：`build:bookmarklet` + `test`
 - `bun run e2e:smoke` / `e2e:ask` / `e2e:inject` / `e2e:patch` —— Playwright E2E（T2，需访问真实站点）
 - `M3E_API_KEY=... bun run eval` —— T3 LLM 评测，需 OpenAI 兼容 API key
+- `uv run serial-proxy/m3e_serial_proxy.py` —— 启动本地串口代理（Web Serial 替身，让 Firefox 等连板）；`uv run python serial-proxy/test_proxy.py` 跑其端到端测试
 
 ## vendor / data 数据流程（关键）
 
@@ -31,7 +32,7 @@
 
 ## 模块结构
 
-- `src/host/` —— **防腐层**：所有对 `window.vm` / Vuex store / 站点的访问。读写工作区、注入/快照、运行程序与回读串口均在此。
+- `src/host/` —— **防腐层**：所有对 `window.vm` / Vuex store / 站点的访问。读写工作区、注入/快照、运行程序与回读串口均在此。串口适配 `serialProxy.mjs`（`navigator.serial` 垫片，经 WebSocket 接本地 `serial-proxy/`，让 Firefox 等也能连板）也归此层。
 - `src/agent/` —— agent 循环与工具：`loop.mjs`（流式 + 只读并发/写串行）、`history.mjs`（含 `/compact` 与缓存断点）、`commands.mjs`（斜杠命令）、`tools/*`（见下）。
 - `src/ctx/agent-prompt.mjs` —— 组装可缓存的系统提示词（身份 + 工具说明 + 算子语法 + 核心词汇）。
 - `src/ui/panel.mjs` —— Shadow DOM 聊天面板（纯视图，回调交给 `main.mjs`）。
