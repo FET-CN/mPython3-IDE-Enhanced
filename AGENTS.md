@@ -26,6 +26,7 @@
 - `data/`（`catalog.*.json` + `knowledge/`）是**已提交的源码**，正常贡献**无需重建**。
 - `vendor/` 是私有的逆向导出，**永不提交**，仅用于重新生成 `data/`。
 - 仅当更新积木/知识时，才需在 `vendor/` 放置导出（`M3E_REVERSE_DIR` / `M3E_BLOCK_EXPORT_DIR` / `M3E_HANDPY_SKILL_DIR`）后跑 `bun run build`，且**只提交 `data/`**。
+- **没有这些导出时去哪下**（详见 `CONTRIBUTING.md`「数据来源」表）：积木定义导出 `M3E_BLOCK_EXPORT_DIR` 取自 <https://labplus.cn/posts/6a093a1247fb2875e3a42414>（**有时效性**，当前 `data/` 基于 20260517 导出）；HandPy 技能文档 `M3E_HANDPY_SKILL_DIR` 取自 <https://github.com/gxxk-dev/HandPy-Skill>（指向其 `skills/handpy`）；`M3E_REVERSE_DIR` 为私有逆向导出。可用 `.env`（Bun 自动加载）配置三处路径。
 
 ## 模块结构
 

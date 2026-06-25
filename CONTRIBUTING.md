@@ -33,6 +33,18 @@ bun run test:watch          # 开发时监听
 
 `data/`（提交的积木目录 + 知识）是构建产物但**视作源数据**提交，以便克隆即用。改积木库请改 `tools/data/` 源 + 重跑对应 build，不要手改 `data/` 里的生成文件。重新生成 `data/` 需要私有原始导出，见 [`.env.example`](./.env.example) 与 README「重新生成 data/」。
 
+### 重新生成 data/ 所需的私有导出（去哪下）
+
+这些原始导出**不随仓库分发**；只有在重新生成 `data/` 时才需要。默认放到项目内 `./vendor/`（已被 `.gitignore` 忽略），或用 `.env` 里的环境变量指向别处：
+
+| 环境变量 | 内容 | 出处 |
+| --- | --- | --- |
+| `M3E_BLOCK_EXPORT_DIR` | 官方 Blockly 积木定义导出（含 `i18n/blocks-i18n.json`、`non-strict/blocks.json`、`i18n/groups-i18n.json`），是积木字段/槽位的权威来源 | <https://labplus.cn/posts/6a093a1247fb2875e3a42414>（**有时效性**：当前 `data/` 取自 20260517 导出，站点更新后请重新提取） |
+| `M3E_HANDPY_SKILL_DIR` | HandPy 技能文档目录（指向仓库内的 `skills/handpy`，含 `references/`），供 `build:knowledge` 取板子文档 | <https://github.com/gxxk-dev/HandPy-Skill> |
+| `M3E_REVERSE_DIR` | 逆向得到的站点 bundle 目录（含 `site/js/app.*.js` 与 `extension_catalog_all.json`），供 catalog 解析下拉枚举/Msg/主控表 | 私有逆向导出，不公开分发 |
+
+拿到后任选其一接入：放进 `./vendor/` 对应子目录，或复制 `.env.example` 为 `.env` 并填好三个路径（Bun 自动加载），再 `bun run build`（catalog + knowledge + css + bookmarklet）。**只提交 `data/`**，不要提交 `vendor/` / `.env`。
+
 ## 许可证
 
 本项目采用 **AGPL-3.0-or-later**。提交贡献即表示你同意以同一许可证授权你的改动。
