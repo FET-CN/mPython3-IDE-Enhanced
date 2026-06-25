@@ -9,6 +9,7 @@ import { readWorkspaceIR } from "./host/read.mjs";
 import { snapshot, restore } from "./host/inject.mjs";
 import { createLock } from "./host/lock.mjs";
 import { installSerialProxy } from "./host/serialProxy.mjs";
+import { installTerminalFix } from "./host/termFix.mjs";
 import { createPanel } from "./ui/panel.mjs";
 import { loadData, cfg } from "./runtime/data.mjs";
 import { makeClient } from "./llm/client.mjs";
@@ -106,6 +107,9 @@ async function boot() {
   rebuildClient();
   refreshBoard();
   setupSerialProxy();
+  // 修复站点「右下角控制台/文件面板不显示」的 bug（xterm 孤立 + clearFn 崩溃 + 比例字体）。
+  // 与串口代理无关，对原生 Chrome 用户也是净改善；站点结构不符时安静降级。
+  try { installTerminalFix(caps); } catch (e) { log.info("终端自愈未启用", e?.message); }
   panel.notice("正在加载积木知识库…");
   try {
     data = await loadData();
