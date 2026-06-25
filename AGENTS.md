@@ -50,6 +50,7 @@
 - **类型校验宽松**：`src/xml/validate.mjs` 只标记模型生成的错误，不做严格类型系统。
 - **UI 样式离线编译**：宿主页跑不了 Tailwind 运行时，故 `tools/build-css.mjs` 把 Tailwind 预编译进 `src/ui/styles.generated.mjs`（**已提交**）并内联到 Shadow DOM。改了 `src/ui/**` 的类名后需 `bun run build:css` 重新生成。
 - **图标统一用 SVG**：UI 内**不得出现 unicode emoji**，图标走 `panel.mjs` 的 `ICON` 注册表（按名解析 SVG）。
+- **积木默认偏好 mpython3 新一代**：积木栏当前展示的是 `mpython3_*`（事件帽子「当…时」、线程、自定义事件、新版 IoT 接收器），应优先于旧的 `mpython_*` 轮询写法，仅在无新版时退回旧积木。实现：`kb/retriever.preferredTypes()` 始终把这批积木注入系统提示词的「新一代积木」稳定卡片节，`retrieve(..., preferGroups:["mpython3"])` 在检索排序中加权；旧积木**不做整体过滤**（多数无新版等价物，仍是当前积木）。
 
 ## 日志约定
 

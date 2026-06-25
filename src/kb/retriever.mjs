@@ -64,7 +64,7 @@ export function retrieve(request, index, opts = {}) {
     if (restrict && !restrict.has(e.group)) continue;
     let s = scoreEntry(e, reqNgrams, reqLatin);
     if (s <= 0) continue;
-    if (prefer && prefer.has(e.group)) s += 2;
+    if (prefer && prefer.has(e.group)) s += 3;
     scored.push({ type: e.type, score: s, group: e.group });
   }
   scored.sort((a, b) => b.score - a.score || a.type.length - b.type.length);
@@ -123,4 +123,27 @@ export function coreTypes(index, board = null) {
     const rb = PRIORITY_RANK.has(b) ? PRIORITY_RANK.get(b) : Infinity;
     return ra - rb; // ranked spine first, then original (stable) order
   });
+}
+
+// Block "generations": the IDE's current side palette is the newer mpython3_*
+// family (event hats 「当…时」, threads, custom events, modern IoT receivers).
+// We surface these to the model always (preferredTypes) and boost them in
+// retrieval (retrieve's preferGroups), so it picks the current blocks the user
+// can actually drag, instead of the legacy mpython_* polling style.
+export const PREFERRED_GROUPS = ["mpython3"];
+
+/**
+ * Always-on "new generation" vocabulary (mpython3_*), board-filtered. Excludes
+ * the labplus/1956-board variants (not 掌控板). Use to render a stable, cacheable
+ * "优先使用" card section in the system prompt.
+ */
+export function preferredTypes(index, board = null) {
+  return index
+    .filter(
+      (e) =>
+        PREFERRED_GROUPS.includes(e.group) &&
+        boardAllows(e.bd, board) &&
+        !/1956|labplus/.test(e.type),
+    )
+    .map((e) => e.type);
 }

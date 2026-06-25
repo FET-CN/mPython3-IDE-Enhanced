@@ -12,7 +12,7 @@ import { createPanel } from "./ui/panel.mjs";
 import { loadData, cfg } from "./runtime/data.mjs";
 import { makeClient } from "./llm/client.mjs";
 import { boardFromMaster, resolveVersion } from "./kb/knowledge.mjs";
-import { coreTypes } from "./kb/retriever.mjs";
+import { coreTypes, preferredTypes } from "./kb/retriever.mjs";
 import { buildAgentSystem } from "./ctx/agent-prompt.mjs";
 import { createHistory } from "./agent/history.mjs";
 import { runAgentTurn } from "./agent/loop.mjs";
@@ -86,6 +86,7 @@ async function boot() {
     const system = buildAgentSystem({
       catalog: data.catalog,
       coreTypes: coreTypes(data.index, board.board),
+      preferredTypes: preferredTypes(data.index, board.board),
       seeds: data.seeds,
       core: data.knowledge?.core,
       antipatterns: data.knowledge?.antipatterns,

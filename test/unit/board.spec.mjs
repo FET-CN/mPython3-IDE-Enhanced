@@ -2,8 +2,9 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { retrieve, coreTypes, boardAllows } from "../../src/kb/retriever.mjs";
+import { retrieve, coreTypes, boardAllows, preferredTypes } from "../../src/kb/retriever.mjs";
 import { boardFromMaster } from "../../src/kb/knowledge.mjs";
+import { buildAgentSystem } from "../../src/ctx/agent-prompt.mjs";
 import { catalogBuilt, loadCatalogMap } from "../helpers/catalog.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -114,5 +115,52 @@ d("board-filtered retrieval (requires built catalog)", () => {
     const full = JSON.parse(readFileSync(resolve(ROOT, "data/catalog.full.json"), "utf8"));
     const blankCore = full.filter((b) => b.core && (!b.zh || !b.zh.trim()));
     expect(blankCore.map((b) => b.type)).toEqual([]);
+  });
+});
+
+d("mpython3 新一代积木偏好 (requires built catalog)", () => {
+  const index = JSON.parse(readFileSync(resolve(ROOT, "data/catalog.index.json"), "utf8"));
+
+  it("preferredTypes surfaces the mpython3 event blocks on both boards", () => {
+    for (const board of ["mPython", "mPython_V3"]) {
+      const pref = preferredTypes(index, board);
+      expect(pref).toContain("mpython3_button_event");
+      expect(pref).toContain("mpython3_shake_detector");
+      expect(pref).toContain("mpython3_main");
+      // every entry is an mpython3_* type
+      expect(pref.every((t) => t.startsWith("mpython3"))).toBe(true);
+    }
+  });
+
+  it("preferredTypes excludes labplus/1956-board variants", () => {
+    const pref = preferredTypes(index, "mPython");
+    expect(pref.some((t) => /1956|labplus/.test(t))).toBe(false);
+    expect(pref).not.toContain("mpython3_siot_receive_from_1956");
+    expect(pref).not.toContain("mpython3_ir_remote_recv_new1956");
+  });
+
+  it("preferGroups ranks the mpython3 IoT receiver above the legacy mpython one", () => {
+    const types = retrieve("收到 SIoT 消息", index, {
+      topN: 80,
+      board: "mPython",
+      preferGroups: ["mpython3"],
+    }).types;
+    const newIdx = types.findIndex((t) => t.startsWith("mpython3_siot"));
+    const oldIdx = types.findIndex((t) => /^mpython_siot/.test(t));
+    expect(newIdx).toBeGreaterThanOrEqual(0);
+    if (oldIdx >= 0) expect(newIdx).toBeLessThan(oldIdx);
+  });
+
+  it("buildAgentSystem renders the always-on mpython3 card section", () => {
+    const catalog = loadCatalogMap();
+    const sys = buildAgentSystem({
+      catalog,
+      coreTypes: coreTypes(index, "mPython"),
+      preferredTypes: preferredTypes(index, "mPython"),
+      version: "v2",
+    });
+    expect(sys).toContain("新一代积木 (mpython3");
+    expect(sys).toContain("mpython3_button_event");
+    expect(sys).toContain("优先使用 mpython3");
   });
 });
