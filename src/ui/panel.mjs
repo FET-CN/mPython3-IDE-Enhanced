@@ -10,11 +10,29 @@
 
 import { PANEL_CSS } from "./styles.generated.mjs";
 
+// A single unified SVG icon registry — no unicode emoji anywhere in the UI.
+// Header glyphs keep their bespoke sizes; tool/status glyphs share `m3e-ic`
+// (size-[14px], currentColor) so they line up with the 12px card text.
+const ic = (body, extra = "") =>
+  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" class="m3e-ic size-[14px] inline-block align-[-2px]">${body}</svg>`;
+
 const ICON = {
   gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" class="size-[17px]"><circle cx="12" cy="12" r="3"/><path d="M12 2.5l1.4 2.6 2.9-.6.6 2.9 2.6 1.4-1.5 2.5 1.5 2.5-2.6 1.4-.6 2.9-2.9-.6L12 21.5l-1.4-2.6-2.9.6-.6-2.9-2.6-1.4 1.5-2.5L4 9.7l2.6-1.4.6-2.9 2.9.6z"/></svg>',
   collapse: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" class="size-[17px]"><path d="M7 6l6 6-6 6M13 6l6 6-6 6"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="size-4"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
   stop: '<svg viewBox="0 0 24 24" fill="currentColor" class="size-3.5"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>',
+  // tool icons
+  read: ic('<path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v15H5.5A1.5 1.5 0 0 1 4 17.5z"/><path d="M11 4h7.5A1.5 1.5 0 0 1 20 5.5v12a1.5 1.5 0 0 1-1.5 1.5H11"/><path d="M7 8h1.5M7 11h1.5M14 8h2.5M14 11h2.5"/>'),
+  search: ic('<circle cx="11" cy="11" r="6"/><path d="m20 20-3.4-3.4"/>'),
+  edit: ic('<path d="M4 20h4L18.5 9.5a2.12 2.12 0 0 0-3-3L5 17z"/><path d="M13.5 6.5l3 3"/>'),
+  run: '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none" class="m3e-ic size-[14px] inline-block align-[-2px]"><path d="M7 5.5v13l11-6.5z"/></svg>',
+  think: ic('<path d="M9.5 16.5h5M10.5 19h3"/><path d="M12 3a6 6 0 0 0-3.7 10.7c.6.5.95 1.1.95 1.8h5.5c0-.7.35-1.3.95-1.8A6 6 0 0 0 12 3z"/>'),
+  todos: ic('<path d="M10 6h10M10 12h10M10 18h10"/><path d="M3.5 6l1.2 1.2L7 5M3.5 12l1.2 1.2L7 11M3.5 18l1.2 1.2L7 17"/>'),
+  help: ic('<circle cx="12" cy="12" r="9"/><path d="M9.6 9.4a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2-2.4 3.6"/><path d="M12 17.5h.01"/>'),
+  // todo-status icons
+  check: ic('<path d="M5 12.5l4.5 4.5L19 7"/>'),
+  running: ic('<circle cx="12" cy="12" r="8.5"/><path d="M10 8.5l5 3.5-5 3.5z" fill="currentColor" stroke="none"/>'),
+  pending: ic('<circle cx="12" cy="12" r="7.5"/>'),
 };
 
 const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
@@ -186,12 +204,13 @@ export function createPanel(opts = {}) {
     };
   }
 
-  /** A tool-call card (think / search / edit / run / todos). */
-  function toolCard({ icon = "·", title, body = "", tone = "" }) {
+  /** A tool-call card (think / search / edit / run / todos). `icon` is a key
+   *  into the ICON registry; unknown keys fall back to the help glyph. */
+  function toolCard({ icon = "help", title, body = "", tone = "" }) {
     const ring = tone === "err" ? "ring-red-500/30" : tone === "ok" ? "ring-emerald-500/25" : "ring-white/10";
     const card = div(`rounded-lg bg-zinc-900/60 p-2.5 ring-1 ${ring}`);
     card.innerHTML =
-      `<div class="flex items-center gap-1.5 text-[12px] font-medium text-zinc-300"><span class="text-zinc-500">${esc(icon)}</span><span>${esc(title)}</span></div>` +
+      `<div class="flex items-center gap-1.5 text-[12px] font-medium text-zinc-300"><span class="text-zinc-500">${ICON[icon] || ICON.help}</span><span>${esc(title)}</span></div>` +
       (body ? `<div data-body class="mt-1 text-[12px] text-zinc-400"></div>` : "");
     if (body) card.querySelector("[data-body]").textContent = body;
     append(card);
@@ -214,10 +233,10 @@ export function createPanel(opts = {}) {
   let todoCard = null;
   function setTodos(todos) {
     if (!todos || !todos.length) { todoCard?.el.remove(); todoCard = null; return; }
-    const mark = { completed: "✓", in_progress: "▸", pending: "○" };
+    const mark = { completed: ICON.check, in_progress: ICON.running, pending: ICON.pending };
     const color = { completed: "text-emerald-400", in_progress: "text-blue-400", pending: "text-zinc-500" };
     const rows = todos
-      .map((t) => `<div class="flex items-start gap-1.5 text-[12px] ${t.status === "completed" ? "text-zinc-500 line-through" : "text-zinc-300"}"><span class="${color[t.status]}">${mark[t.status] || "○"}</span><span>${esc(t.title)}</span></div>`)
+      .map((t) => `<div class="flex items-start gap-1.5 text-[12px] ${t.status === "completed" ? "text-zinc-500 line-through" : "text-zinc-300"}"><span class="mt-px shrink-0 ${color[t.status] || "text-zinc-500"}">${mark[t.status] || ICON.pending}</span><span>${esc(t.title)}</span></div>`)
       .join("");
     const html = `<div class="mb-1 text-[11px] font-medium uppercase tracking-wide text-zinc-500">任务清单</div>${rows}`;
     if (!todoCard) { todoCard = { el: append(div("rounded-lg bg-zinc-900/60 p-2.5 ring-1 ring-white/10")) }; }

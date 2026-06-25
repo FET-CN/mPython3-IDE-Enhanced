@@ -20,14 +20,15 @@ import { ALL_TOOLS } from "./agent/tools/index.mjs";
 import { parseSlash, commandPrompt, COMMANDS, helpText } from "./agent/commands.mjs";
 import { log } from "./runtime/log.mjs";
 
-// Human-facing titles for tool cards / confirmation prompts.
+// Human-facing titles for tool cards / confirmation prompts. `icon` is a key into
+// the panel's unified SVG icon registry (no unicode emoji anywhere in the UI).
 const TOOL_META = {
-  read_workspace: { icon: "📖", label: "读取工作区" },
-  search_blocks: { icon: "🔍", label: "检索积木" },
-  edit_blocks: { icon: "✏️", label: "修改积木", confirmTitle: "应用积木修改？" },
-  run_code: { icon: "▶️", label: "运行程序", confirmTitle: "在掌控板上运行当前程序？" },
-  think: { icon: "💭", label: "思考" },
-  update_todos: { icon: "✅", label: "更新任务清单" },
+  read_workspace: { icon: "read", label: "读取工作区" },
+  search_blocks: { icon: "search", label: "检索积木" },
+  edit_blocks: { icon: "edit", label: "修改积木", confirmTitle: "应用积木修改？" },
+  run_code: { icon: "run", label: "运行程序", confirmTitle: "在掌控板上运行当前程序？" },
+  think: { icon: "think", label: "思考" },
+  update_todos: { icon: "todos", label: "更新任务清单" },
 };
 
 async function boot() {
@@ -69,8 +70,8 @@ async function boot() {
   }
   function refreshBoard() {
     board = boardFromMaster(currentMaster());
-    if (board.supported) panel.setBoard("● " + board.label, "ok");
-    else panel.setBoard("⚠ " + board.label + "(不支持)", "err");
+    if (board.supported) panel.setBoard(board.label, "ok");
+    else panel.setBoard(board.label + "（不支持）", "err");
     return board;
   }
 
@@ -134,7 +135,7 @@ async function boot() {
         panel.openSettings();
         break;
       case "help": {
-        const card = panel.toolCard({ icon: "❔", title: "命令帮助" });
+        const card = panel.toolCard({ icon: "help", title: "命令帮助" });
         card.setBody(helpText());
         break;
       }
@@ -144,7 +145,7 @@ async function boot() {
   function ensureReady() {
     if (!refreshBoard().supported) { panel.notice("当前主控不受支持，请切换到「掌控板」或「掌控板V3」", "err"); return false; }
     if (!data || !history) { panel.notice("知识库未就绪", "err"); return false; }
-    if (!cfg.llm().apiKey) { panel.notice("请在 ⚙ 设置里填写 API Key", "err"); panel.openSettings(); return false; }
+    if (!cfg.llm().apiKey) { panel.notice("请在设置（右上角齿轮）里填写 API Key", "err"); panel.openSettings(); return false; }
     return true;
   }
 
@@ -215,7 +216,7 @@ async function boot() {
             closeBubble(ev.tool_calls?.length > 0);
             break;
           case "think":
-            panel.toolCard({ icon: "💭", title: "思考" }).setBody(ev.thought);
+            panel.toolCard({ icon: "think", title: "思考" }).setBody(ev.thought);
             break;
           case "todos":
             panel.setTodos(ev.todos);
