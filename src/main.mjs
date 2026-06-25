@@ -1,16 +1,33 @@
-// src/main.mjs — Entry point. Singleton-guards, detects the host, loads data,
-// builds the panel, and wires: generate → lock → pipeline → inject → undo.
+// src/main.mjs — Entry point for the multi-turn chat assistant. Detects the host,
+// loads the catalog/knowledge, builds the agent's stable system prompt, and wires
+// the chat panel to the tool-calling agent loop: user turn → runAgentTurn (which
+// streams the reply and calls tools: read_workspace / search_blocks / edit_blocks
+// / run_code / think / update_todos) → render. Conversation state is in-memory.
 
-import { detectHost, isPythonMode } from "./host/hostBridge.mjs";
+import { detectHost } from "./host/hostBridge.mjs";
 import { readWorkspaceIR } from "./host/read.mjs";
-import { injectOps, snapshot, restore } from "./host/inject.mjs";
-import { applyOps, anchorKey, anchorFromKey } from "./host/ops.mjs";
+import { snapshot, restore } from "./host/inject.mjs";
 import { createLock } from "./host/lock.mjs";
 import { createPanel } from "./ui/panel.mjs";
 import { loadData, cfg } from "./runtime/data.mjs";
 import { makeClient } from "./llm/client.mjs";
-import { generateProgram } from "./pipeline.mjs";
-import { boardFromMaster } from "./kb/knowledge.mjs";
+import { boardFromMaster, resolveVersion } from "./kb/knowledge.mjs";
+import { coreTypes } from "./kb/retriever.mjs";
+import { buildAgentSystem } from "./ctx/agent-prompt.mjs";
+import { createHistory } from "./agent/history.mjs";
+import { runAgentTurn } from "./agent/loop.mjs";
+import { ALL_TOOLS } from "./agent/tools/index.mjs";
+import { parseSlash, commandPrompt, COMMANDS, helpText } from "./agent/commands.mjs";
+
+// Human-facing titles for tool cards / confirmation prompts.
+const TOOL_META = {
+  read_workspace: { icon: "📖", label: "读取工作区" },
+  search_blocks: { icon: "🔍", label: "检索积木" },
+  edit_blocks: { icon: "✏️", label: "修改积木", confirmTitle: "应用积木修改？" },
+  run_code: { icon: "▶️", label: "运行程序", confirmTitle: "在掌控板上运行当前程序？" },
+  think: { icon: "💭", label: "思考" },
+  update_todos: { icon: "✅", label: "更新任务清单" },
+};
 
 async function boot() {
   if (window.__m3e__) { window.__m3e__.focus?.(); return; }
@@ -23,237 +40,235 @@ async function boot() {
     alert("AI 编程助手无法启动：" + e.message);
     return;
   }
+
   const lock = createLock(caps);
   const panel = createPanel({
-    onGenerate: (req) => onGenerate(req),
-    onUndo: () => onUndo(),
-    onSaveConfig: (c) => { for (const k in c) cfg.set(k, c[k]); panel.setStatus("设置已保存", "ok"); },
+    onSend: ({ text }) => handleInput(text),
+    onStop: () => currentAbort?.abort(),
+    onSaveConfig: (c) => { for (const k in c) cfg.set(k, c[k]); panel.setStatus("设置已保存", "ok"); rebuildClient(); },
   });
   panel.loadConfig(cfg.llm());
-  const debugRounds = [];
-  window.__m3e__ = { focus: () => panel.setHidden(false), panel, caps, debug: debugRounds };
 
+  const session = { lastSnapshot: null, todos: [], approvals: new Set() };
   let data = null;
-  let lastSnapshot = null;
-  let lastGen = null; // { withIds, ops, anchors } for anchor re-application
+  let history = null;
+  let client = null;
+  let currentAbort = null;
+  let board = boardFromMaster(currentMaster());
+  let version = "unknown";
 
-  function currentBoard() {
-    return boardFromMaster(window.localStorage.masterControl || caps.state().masterControl || "");
+  window.__m3e__ = { focus: () => panel.setHidden(false), panel, caps, session };
+
+  function currentMaster() {
+    return window.localStorage.masterControl || caps.state().masterControl || "";
+  }
+  function rebuildClient() {
+    const llm = cfg.llm();
+    client = makeClient({ ...llm, fetchImpl: window.fetch.bind(window) });
   }
   function refreshBoard() {
-    const b = currentBoard();
-    if (b.supported) {
-      panel.setBoard("● " + b.label, "ok");
-      panel.setGenerateEnabled(true);
-    } else {
-      panel.setBoard("⚠ " + b.label + "(不支持)", "err");
-      panel.setGenerateEnabled(false);
-    }
-    return b;
+    board = boardFromMaster(currentMaster());
+    if (board.supported) panel.setBoard("● " + board.label, "ok");
+    else panel.setBoard("⚠ " + board.label + "(不支持)", "err");
+    return board;
   }
-  refreshBoard();
 
-  panel.log("正在加载积木知识库…");
+  rebuildClient();
+  refreshBoard();
+  panel.notice("正在加载积木知识库…");
   try {
     data = await loadData();
-    panel.log(`已加载 ${data.index.length} 个积木 + 板子知识。`, "ok");
+    version = board.version !== "unknown" ? board.version
+      : resolveVersion({ master: currentMaster(), triggers: data.knowledge?.triggers });
+    const system = buildAgentSystem({
+      catalog: data.catalog,
+      coreTypes: coreTypes(data.index, board.board),
+      seeds: data.seeds,
+      core: data.knowledge?.core,
+      antipatterns: data.knowledge?.antipatterns,
+      version,
+    });
+    history = createHistory(system);
+    panel.notice(`已就绪：${data.index.length} 个积木 · ${board.label}`, "ok");
+    panel.notice("用中文描述需求或提问，输入 /help 查看命令。");
   } catch (e) {
-    panel.log("加载知识库失败：" + e.message, "err");
+    panel.notice("加载知识库失败：" + e.message, "err");
   }
 
-  function handleProgress(ev) {
-    const msg = progressMsg(ev);
-    if (msg) panel.log(msg, ev.phase === "validate" && !ev.ok ? "warn" : "");
-    if (ev.phase === "validate" || ev.phase === "parse_error") {
-      const round = {
-        attempt: (ev.attempt ?? 0) + 1,
-        ok: ev.phase === "validate" ? !!ev.ok : false,
-        context: ev.context ?? null,
-        raw: ev.raw ?? "",
-        ir: ev.ir ?? null,
-        errors: ev.report?.errors ?? (ev.detail ? [{ kind: ev.phase, detail: ev.detail }] : []),
-      };
-      debugRounds.push(round);
-      logRound(round);
+  // ---- input dispatch ----
+
+  function handleInput(text) {
+    if (!text) return;
+    const slash = parseSlash(text);
+    if (slash?.unknown) { panel.notice(`未知命令 /${slash.name}，输入 /help 查看`, "err"); return; }
+    if (slash) {
+      if (COMMANDS[slash.name].kind === "local") return runLocalCommand(slash.name);
+      panel.addUser("/" + slash.name + (slash.arg ? " " + slash.arg : ""));
+      return runTurn(commandPrompt(slash.name, slash.arg));
     }
+    panel.addUser(text);
+    runTurn(text);
   }
 
-  async function onGenerate({ request }) {
-    const board = refreshBoard();
-    if (!board.supported) {
-      panel.setStatus("请先把主控切到掌控板", "err");
-      panel.log(`当前主控「${board.label}」不受支持。请在 IDE 左上角把主控切换到「掌控板」或「掌控板V3」后再生成。`, "err");
-      return;
-    }
-    if (!request) { panel.setStatus("请先输入需求", "err"); return; }
-    if (!data) { panel.setStatus("知识库未就绪", "err"); return; }
-    const llm = cfg.llm();
-    if (!llm.apiKey) { panel.setStatus("请在 ⚙ 设置里填写 API Key", "err"); return; }
-
-    panel.setBusy(true);
-    panel.clearLog();
-    panel.clearPlan();
-    debugRounds.length = 0;
-    lock.lock();
-    lastSnapshot = snapshot(caps);
-    try {
-      const client = makeClient({ ...llm, fetchImpl: window.fetch.bind(window) });
-      const current = readWorkspaceIR(caps);
-      const res = await generateProgram({
-        request, master: board.master,
-        index: data.index, catalog: data.catalog, seeds: data.seeds,
-        knowledge: data.knowledge, currentProgram: current, client, maxRepairs: 2,
-        onProgress: (ev) => handleProgress(ev),
-      });
-      if (!res.ok) {
-        panel.log("生成未通过校验：\n" + (res.report?.errors || []).slice(0, 8).map((e) => "· " + e.detail).join("\n"), "err");
-        panel.setStatus("失败，请重试或调整描述", "err");
-        return;
+  async function runLocalCommand(name) {
+    switch (name) {
+      case "clear":
+        history?.clear(); panel.clearFeed(); session.todos = [];
+        panel.notice("已清空对话（工作区保留）", "ok");
+        break;
+      case "compact":
+        if (!ensureReady()) break;
+        panel.setBusy(true);
+        try { await history.compact(client); panel.notice("已把对话压缩为摘要", "ok"); }
+        catch (e) { panel.notice("压缩失败：" + e.message, "err"); }
+        finally { panel.setBusy(false); }
+        break;
+      case "undo":
+        if (session.lastSnapshot) {
+          restore(caps, session.lastSnapshot); session.lastSnapshot = null;
+          panel.notice("已撤销上一次积木改动", "ok");
+        } else panel.notice("无可撤销内容");
+        break;
+      case "config":
+        panel.openSettings();
+        break;
+      case "help": {
+        const card = panel.toolCard({ icon: "❔", title: "命令帮助" });
+        card.setBody(helpText());
+        break;
       }
-      lastGen = { withIds: res.withIds, ops: res.ops, anchors: res.anchors };
-      applyAndRender(res.ir, res.ops);
+    }
+  }
+
+  function ensureReady() {
+    if (!refreshBoard().supported) { panel.notice("当前主控不受支持，请切换到「掌控板」或「掌控板V3」", "err"); return false; }
+    if (!data || !history) { panel.notice("知识库未就绪", "err"); return false; }
+    if (!cfg.llm().apiKey) { panel.notice("请在 ⚙ 设置里填写 API Key", "err"); panel.openSettings(); return false; }
+    return true;
+  }
+
+  // ---- one user turn through the agent loop ----
+
+  async function runTurn(content) {
+    if (!ensureReady()) return;
+    const n = countBlocks(readWorkspaceIR(caps));
+    const hint = n ? `（当前工作区约 ${n} 个积木；编辑前请调用 read_workspace 获取精确结构与 id）` : "（当前工作区为空）";
+    history.addUser(`${content}\n${hint}`);
+
+    currentAbort = new AbortController();
+    panel.setBusy(true);
+    lock.lock();
+    const ui = createTurnUI();
+    try {
+      const r = await runAgentTurn({
+        messages: history.messages(),
+        tools: ALL_TOOLS,
+        client,
+        ctx: { caps, data, board, version, session, confirm: confirmTool },
+        onEvent: ui.onEvent,
+        signal: currentAbort.signal,
+      });
+      ui.finish();
+      if (r.stopped === "max_steps") panel.notice("已达到单轮最多步骤数，已停止。可继续追问。", "err");
     } catch (e) {
-      panel.log("出错：" + e.message, "err");
-      panel.setStatus("出错", "err");
+      if (currentAbort.signal.aborted) panel.notice("已停止。");
+      else panel.notice("出错：" + (e?.message || String(e)), "err");
     } finally {
       lock.unlock();
       panel.setBusy(false);
+      currentAbort = null;
     }
   }
 
-  /** Inject a merged program, show its preview, and render the editable plan. */
-  function applyAndRender(ir, ops) {
-    panel.showPreview(JSON.stringify(ir, null, 1));
-    // Surgically patch the PRE-EDIT workspace snapshot with just these ops, so
-    // untouched blocks (内置图像 shadows, default math_number shadows, positions…)
-    // are preserved byte-for-byte instead of being rebuilt from lossy IR.
-    const base = lastSnapshot?.xml ?? "";
-    const inj = injectOps(caps, base, ops, { catalog: data.catalog });
-    if (inj.ok) {
-      panel.setStatus(`已应用：${inj.blockCount ?? "?"} 个积木`, "ok");
-      panel.log(`注入成功，工作区现有 ${inj.blockCount ?? "?"} 个积木。`, "ok");
-    } else {
-      panel.setStatus("注入时算子有误", "err");
-      panel.log("算子错误：" + (inj.errors || []).map((e) => e.detail).join("；"), "err");
-    }
-    panel.setPlan(buildPlan(ops, lastGen.withIds, lastGen.anchors, data.catalog), onAnchorChange);
+  /** Translate agent-loop events into panel rendering. */
+  function createTurnUI() {
+    let cur = null;            // current streaming assistant bubble
+    const pending = new Map(); // name → queue of open tool cards
+    let runCard = null;        // live run_code output card
+    let runText = "";          // accumulated run_code output
+
+    const openCard = (name, card) => {
+      if (!pending.has(name)) pending.set(name, []);
+      pending.get(name).push(card);
+    };
+    const closeBubble = (hasTools) => {
+      if (!cur) return;
+      const txt = cur.text();
+      if (!txt && hasTools) cur.el.remove();
+      else cur.done();
+      cur = null;
+    };
+
+    return {
+      onEvent(ev) {
+        switch (ev.type) {
+          case "assistant_start":
+            cur = panel.beginAssistant();
+            break;
+          case "assistant_delta":
+            if (!cur) cur = panel.beginAssistant();
+            cur.delta(ev.text);
+            break;
+          case "assistant_done":
+            closeBubble(ev.tool_calls?.length > 0);
+            break;
+          case "think":
+            panel.toolCard({ icon: "💭", title: "思考" }).setBody(ev.thought);
+            break;
+          case "todos":
+            panel.setTodos(ev.todos);
+            break;
+          case "tool_start": {
+            if (ev.name === "think" || ev.name === "update_todos") break; // dedicated events render these
+            const meta = TOOL_META[ev.name] || { icon: "·", label: ev.name };
+            const sub = ev.name === "search_blocks" && ev.args?.query ? "：" + ev.args.query : "";
+            const card = panel.toolCard({ icon: meta.icon, title: meta.label + sub });
+            openCard(ev.name, card);
+            if (ev.name === "run_code") { runCard = card; runText = ""; }
+            break;
+          }
+          case "run_output":
+            if (runCard) { runText += ev.chunk; runCard.setBody(runText, true); }
+            break;
+          case "tool_result": {
+            const card = pending.get(ev.name)?.shift();
+            if (card) card.setTone(ev.is_error ? "err" : "ok");
+            break;
+          }
+          case "tool_rejected": {
+            const card = pending.get(ev.name)?.shift();
+            if (card) { card.setTone("err"); card.setBody("已拒绝"); }
+            break;
+          }
+          case "applied":
+            // editBlocks already stored the pre-edit snapshot on session for /undo.
+            break;
+        }
+      },
+      finish() { closeBubble(false); },
+    };
   }
 
-  /** User changed an insert/move op's落点 in the panel → re-apply that op. */
-  function onAnchorChange(opIndex, key) {
-    if (!lastGen) return;
-    const ops = lastGen.ops.map((o, i) => (i === opIndex ? { ...o, anchor: anchorFromKey(key) } : o));
-    const applied = applyOps(lastGen.withIds, ops, data.catalog);
-    if (!applied.ok) {
-      panel.setStatus("该落点不可用，已忽略", "err");
-      panel.log("落点不可用：" + applied.errors.map((e) => e.detail).join("；"), "err");
-      return;
-    }
-    lastGen.ops = ops;
-    lock.lock();
-    try { applyAndRender(applied.result, ops); }
-    finally { lock.unlock(); }
-  }
-
-  function onUndo() {
-    if (!lastSnapshot) { panel.setStatus("无可撤销内容", ""); return; }
-    restore(caps, lastSnapshot);
-    lastSnapshot = null;
-    lastGen = null;
-    panel.clearPlan();
-    panel.setStatus("已撤销", "ok");
+  // ---- confirmation gate for write/side-effecting tools ----
+  async function confirmTool(tool, args) {
+    const meta = TOOL_META[tool.name] || {};
+    let detail = "";
+    if (tool.name === "edit_blocks") detail = `共 ${Array.isArray(args?.ops) ? args.ops.length : "?"} 个编辑算子。`;
+    if (tool.name === "run_code") detail = "将把当前程序下发到已连接的设备运行。";
+    return panel.confirm({ title: meta.confirmTitle || `执行 ${tool.name}？`, detail });
   }
 }
 
-/** Build the human-readable, editable edit plan from the op list. */
-function buildPlan(ops, withIds, anchors, catalog) {
-  const idType = idTypeMap(withIds);
-  const zh = (type) => catalog?.get?.(type)?.zh || type || "?";
-  const zhId = (id) => (idType.has(id) ? `「${zh(idType.get(id))}」` : `id ${id}`);
-  const anchorOptions = (anchors || []).map((a) => ({ key: a.key, label: a.label }));
-  const items = [];
-  (ops || []).forEach((op, i) => {
-    let text = "";
-    let anchor = null;
-    switch (op?.op) {
-      case "clear": text = "清空工作区"; break;
-      case "insert":
-        text = `插入 「${zh(firstType(op.blocks))}…」`;
-        anchor = { options: anchorOptions, selectedKey: anchorKey(op.anchor) };
-        break;
-      case "delete": text = `删除 ${zhId(op.id)}`; break;
-      case "move":
-        text = `移动 ${zhId(op.id)}`;
-        anchor = { options: anchorOptions, selectedKey: anchorKey(op.anchor) };
-        break;
-      case "setField": text = `${zhId(op.id)} 的 ${op.name} → ${op.value}`; break;
-      default: text = `未知算子 ${op?.op || "?"}`;
-    }
-    items.push({ text, opIndex: i, anchor });
-  });
-  return items;
-}
-
-function idTypeMap(withIds) {
-  const m = new Map();
-  const walk = (n) => {
-    if (n.id) m.set(n.id, n.type);
-    for (const v of Object.values(n.inputs || {})) walk(v);
-    for (const seq of Object.values(n.statements || {})) for (const c of seq) walk(c);
+function countBlocks(program) {
+  let n = 0;
+  const walk = (node) => {
+    if (!node || !node.type) return;
+    n++;
+    for (const v of Object.values(node.inputs || {})) walk(v);
+    for (const seq of Object.values(node.statements || {})) for (const c of seq) walk(c);
   };
-  for (const stack of withIds || []) for (const n of stack) walk(n);
-  return m;
-}
-
-function firstType(blocks) {
-  let b = blocks;
-  while (Array.isArray(b)) b = b[0];
-  return b?.type || "?";
-}
-
-function progressMsg(ev) {
-  switch (ev.phase) {
-    case "version": return `板型判定: ${ev.version}`;
-    case "retrieve": return "检索相关积木…";
-    case "context": return `已装配上下文(相关积木 ${ev.retrieved}，板子知识 ${ev.boardDocs})`;
-    case "generate": return `调用模型生成(第 ${ev.attempt + 1} 次)…`;
-    case "validate": return ev.ok ? "校验通过 ✓" : `校验发现 ${ev.errors} 处问题，自动修复…`;
-    case "parse_error": return "输出解析失败，重试…";
-    default: return "";
-  }
-}
-
-/** Dump one generate→validate round to console.debug as a collapsed group so the
- *  assembled context (messages sent to the model), raw JSON output, parsed IR and
- *  validation errors are all queryable & archivable — without cluttering the panel.
- *  Everything is also retained on `window.__m3e__.debug` for ad-hoc inspection. */
-function logRound(r) {
-  if (typeof console === "undefined") return;
-  const ok = r.ok;
-  const head = `%c[m3e] 第 ${r.attempt} 轮 · ${ok ? "✓ 通过" : "✗ 未通过"}`;
-  const css = `color:${ok ? "#34d399" : "#fbbf24"};font-weight:600`;
-  (console.groupCollapsed || console.debug)(head, css);
-  if (r.context) {
-    console.debug("装配上下文 (messages 数组):", r.context);
-    console.debug("上下文文本预览:\n" + contextText(r.context));
-  }
-  console.debug("原始模型输出:\n" + (r.raw || "(空)"));
-  if (r.ir) console.debug("解析出的 IR:", r.ir);
-  if (r.errors && r.errors.length) {
-    if (console.table) console.table(r.errors);
-    else console.debug("校验错误:", r.errors);
-  }
-  console.groupEnd?.();
-}
-
-/** Flatten an OpenAI-style messages array into a readable role/content transcript. */
-function contextText(messages) {
-  return (messages || [])
-    .map((m) => {
-      const c = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
-      return `── [${m.role}] ──\n${c}`;
-    })
-    .join("\n\n");
+  for (const stack of program || []) for (const node of stack) walk(node);
+  return n;
 }
 
 boot();

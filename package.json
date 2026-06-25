@@ -26,17 +26,21 @@
   "scripts": {
     "build:catalog": "bun tools/build-catalog.mjs",
     "build:knowledge": "bun tools/build-knowledge.mjs",
+    "build:css": "bun tools/build-css.mjs",
     "build:bookmarklet": "bun tools/build-bookmarklet.mjs",
-    "build": "bun run build:catalog && bun run build:knowledge && bun run build:bookmarklet",
+    "build": "bun run build:catalog && bun run build:knowledge && bun run build:css && bun run build:bookmarklet",
     "test": "bunx vitest run",
     "test:watch": "bunx vitest",
+    "verify": "bun run build:bookmarklet && bun run test",
     "e2e:inject": "bun e2e/inject.e2e.mjs",
     "e2e:patch": "bun e2e/patch.e2e.mjs",
+    "e2e:smoke": "bun e2e/agent-smoke.e2e.mjs",
     "eval": "bun eval/run-eval.mjs"
   },
   "devDependencies": {
     "linkedom": "^0.18.5",
     "playwright": "^1.61.1",
+    "tailwindcss": "3",
     "vitest": "^2.1.8"
   }
 }

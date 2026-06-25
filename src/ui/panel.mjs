@@ -1,212 +1,241 @@
 // src/ui/panel.mjs — Shadow-DOM chat drawer injected into the host page. Fully
-// style-isolated. Pure view: emits callbacks; main.mjs wires them to the
-// pipeline. Visual language follows the uidotsh design guidelines adapted to an
-// always-dark application UI: neutral (zinc) palette, ring/opacity separation
-// instead of solid gray borders, recessed "well" surfaces for logs/output,
-// compact buttons (one primary, the rest ghost), tabular-nums for counts.
+// style-isolated; styling is precompiled Tailwind (PANEL_CSS) inlined into the
+// shadow <style>. This is a pure view: it renders messages / tool cards / a todo
+// list / a streaming assistant bubble / confirm prompts, and emits callbacks
+// (onSend, onUndo, onStop, onSaveConfig) that main.mjs wires to the agent loop.
+//
+// Design follows the uidotsh guidelines for an always-dark application UI: zinc
+// palette, ring/opacity separation (not solid gray borders), recessed wells for
+// logs/output, one primary button, tabular-nums for counts.
 
-const STYLE = `
-:host{
-  all:initial;
-  --bg:#0c0c0e; --raised:#151517; --well:#08080a;
-  --line:rgba(255,255,255,.08); --line-2:rgba(255,255,255,.12);
-  --text:#ededf0; --muted:#a1a1aa; --faint:#71717a;
-  --accent:#3b82f6; --accent-press:#2563eb;
-  --ok:#34d399; --warn:#fbbf24; --err:#f87171;
-  --r:10px;
+import { PANEL_CSS } from "./styles.generated.mjs";
+
+const ICON = {
+  gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" class="size-[17px]"><circle cx="12" cy="12" r="3"/><path d="M12 2.5l1.4 2.6 2.9-.6.6 2.9 2.6 1.4-1.5 2.5 1.5 2.5-2.6 1.4-.6 2.9-2.9-.6L12 21.5l-1.4-2.6-2.9.6-.6-2.9-2.6-1.4 1.5-2.5L4 9.7l2.6-1.4.6-2.9 2.9.6z"/></svg>',
+  collapse: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" class="size-[17px]"><path d="M7 6l6 6-6 6M13 6l6 6-6 6"/></svg>',
+  send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="size-4"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
+  stop: '<svg viewBox="0 0 24 24" fill="currentColor" class="size-3.5"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>',
+};
+
+const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+/** Minimal, safe markdown: fenced code blocks, inline code, paragraphs. */
+function renderMarkdown(text) {
+  const parts = String(text).split(/```(\w*)\n?([\s\S]*?)```/g);
+  let html = "";
+  for (let i = 0; i < parts.length; i += 3) {
+    const prose = parts[i];
+    if (prose) {
+      html += prose
+        .split(/\n{2,}/)
+        .map((p) => `<p>${inlineMd(p)}</p>`)
+        .join("");
+    }
+    const code = parts[i + 2];
+    if (code != null) html += `<pre><code>${esc(code.replace(/\n$/, ""))}</code></pre>`;
+  }
+  return html;
 }
-*{box-sizing:border-box;font-family:system-ui,"PingFang SC","Microsoft YaHei",sans-serif;}
-.wrap{position:fixed;top:0;right:0;height:100dvh;width:384px;z-index:2147483600;
-  background:var(--bg);color:var(--text);display:flex;flex-direction:column;
-  box-shadow:-8px 0 32px rgba(0,0,0,.5);outline:1px solid var(--line);
-  -webkit-font-smoothing:antialiased;transform:translateX(0);transition:transform .22s ease;}
-.wrap.hidden{transform:translateX(392px);}
+function inlineMd(s) {
+  return esc(s).replace(/`([^`]+)`/g, '<code class="rounded bg-white/10 px-1 py-0.5 text-[12px]">$1</code>').replace(/\n/g, "<br>");
+}
 
-header{display:flex;align-items:center;gap:8px;padding:11px 12px;
-  background:var(--raised);border-bottom:1px solid var(--line);}
-header b{font-size:14px;font-weight:600;letter-spacing:.01em;flex:1;}
-.badge{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;line-height:1;
-  padding:4px 8px;border-radius:999px;background:rgba(255,255,255,.05);
-  color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap;}
-.badge::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.9;}
-.badge.ok{color:var(--ok);background:color-mix(in srgb,var(--ok) 14%,transparent);}
-.badge.err{color:var(--err);background:color-mix(in srgb,var(--err) 16%,transparent);}
-
-button{cursor:pointer;border:none;border-radius:8px;padding:7px 12px;font-size:13px;
-  font-weight:500;color:#fff;background:rgba(255,255,255,.06);transition:background .12s ease;}
-button:hover{background:rgba(255,255,255,.1);}
-button.primary{background:var(--accent);}
-button.primary:hover{background:var(--accent-press);}
-button.primary:disabled{background:rgba(255,255,255,.06);color:var(--faint);cursor:not-allowed;}
-button:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
-button.ghost{background:transparent;color:var(--muted);padding:5px 9px;}
-button.ghost:hover{background:rgba(255,255,255,.06);color:var(--text);}
-button.xs{font-size:11.5px;padding:3px 8px;border-radius:7px;}
-.icon-btn{display:inline-flex;align-items:center;justify-content:center;
-  width:30px;height:30px;padding:0;border-radius:8px;background:transparent;color:var(--muted);}
-.icon-btn:hover{background:rgba(255,255,255,.07);color:var(--text);}
-.icon-btn svg{width:17px;height:17px;display:block;stroke:currentColor;fill:none;
-  stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
-
-.body{flex:1;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:11px;}
-textarea{width:100%;min-height:76px;resize:vertical;border-radius:var(--r);
-  border:1px solid var(--line-2);background:var(--well);color:var(--text);
-  padding:9px 10px;font-size:13px;line-height:1.5;}
-textarea::placeholder{color:var(--faint);}
-textarea:focus-visible{outline:2px solid var(--accent);outline-offset:-1px;border-color:transparent;}
-.row{display:flex;gap:8px;align-items:center;}
-
-/* edit plan */
-.plan{display:flex;flex-direction:column;gap:6px;}
-.plan .item{background:var(--well);border-radius:9px;outline:1px solid var(--line);
-  padding:8px 9px;display:flex;flex-direction:column;gap:6px;}
-.plan .desc{font-size:12.5px;color:var(--text);line-height:1.45;}
-.plan .desc .k{color:var(--faint);font:11px ui-monospace,monospace;}
-.plan select{width:100%;border-radius:7px;border:1px solid var(--line-2);
-  background:var(--bg);color:var(--text);padding:5px 7px;font-size:12px;}
-.plan select:focus-visible{outline:2px solid var(--accent);outline-offset:-1px;}
-.plan .lbl{font-size:11px;color:var(--muted);}
-
-.muted{color:var(--faint);font-size:12px;}
-[data-status]{font-variant-numeric:tabular-nums;}
-
-/* recessed wells (logs / output) */
-.well{background:var(--well);border-radius:var(--r);
-  outline:1px solid var(--line);padding:9px 10px;}
-.log{font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;
-  white-space:pre-wrap;color:var(--muted);min-height:38px;max-height:150px;overflow:auto;
-  font-variant-numeric:tabular-nums;}
-.preview{font:11px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;
-  white-space:pre-wrap;color:#86efac;max-height:200px;overflow:auto;}
-
-.err{color:var(--err);}
-.ok{color:var(--ok);}
-.warn{color:var(--warn);}
-
-.settings{display:none;flex-direction:column;gap:9px;padding:12px;
-  border-top:1px solid var(--line);background:var(--raised);}
-.settings.show{display:flex;}
-.settings input{width:100%;border-radius:8px;border:1px solid var(--line-2);
-  background:var(--well);color:var(--text);padding:8px 9px;font-size:12.5px;}
-.settings input:focus-visible{outline:2px solid var(--accent);outline-offset:-1px;border-color:transparent;}
-label{font-size:12px;color:var(--muted);}
-
-.launcher{position:fixed;top:46%;right:0;z-index:2147483600;display:none;
-  writing-mode:vertical-rl;background:var(--accent);color:#fff;padding:14px 8px;
-  border-radius:10px 0 0 10px;cursor:pointer;font-size:13px;font-weight:600;
-  box-shadow:-3px 2px 14px rgba(0,0,0,.4);user-select:none;letter-spacing:3px;
-  transition:background .12s ease;}
-.launcher:hover{background:var(--accent-press);}
-.launcher.show{display:block;}
-`;
-
-export function createPanel(opts) {
+export function createPanel(opts = {}) {
   const doc = document;
   const host = doc.createElement("div");
   host.id = "m3e-panel-host";
   const root = host.attachShadow({ mode: "open" });
+
   root.innerHTML = `
-    <style>${STYLE}</style>
-    <div class="launcher" data-act="reopen">AI 编程</div>
-    <div class="wrap">
-      <header>
-        <b>AI 图形化编程</b>
-        <span class="badge" data-board>检测中…</span>
-        <button class="icon-btn" data-act="settings" title="设置" aria-label="设置">
-          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5l1.4 2.6 2.9-.6.6 2.9 2.6 1.4-1.5 2.5 1.5 2.5-2.6 1.4-.6 2.9-2.9-.6L12 21.5l-1.4-2.6-2.9.6-.6-2.9-2.6-1.4 1.5-2.5L4 9.7l2.6-1.4.6-2.9 2.9.6z"/></svg>
-        </button>
-        <button class="icon-btn" data-act="toggle" title="收起" aria-label="收起">
-          <svg viewBox="0 0 24 24"><path d="M7 6l6 6-6 6M13 6l6 6-6 6"/></svg>
-        </button>
-      </header>
-      <div class="body">
-        <textarea placeholder="用中文描述你想做的修改，例如：按 A 键时在屏幕显示温度 / 删掉 RGB 那块"></textarea>
-        <div class="row">
-          <button class="ghost" data-act="undo">↶ 撤销</button>
-          <span style="flex:1"></span>
-          <button class="primary" data-act="gen">生成并应用</button>
+    <style>${PANEL_CSS}</style>
+    <div class="m3e">
+      <button data-act="reopen" class="m3e-launcher fixed right-0 top-[46%] z-[2147483600] hidden rounded-l-xl bg-blue-600 px-2 py-3.5 font-semibold tracking-[3px] text-white shadow-lg [writing-mode:vertical-rl] hover:bg-blue-500">AI 编程</button>
+      <div data-wrap class="m3e-wrap fixed right-0 top-0 z-[2147483600] flex h-[100dvh] w-96 flex-col bg-zinc-950 text-zinc-100 antialiased shadow-[-8px_0_32px_rgba(0,0,0,.5)] outline outline-1 outline-white/10 transition-transform duration-200">
+        <header class="flex items-center gap-2 border-b border-white/10 bg-zinc-900 px-3 py-2.5">
+          <b class="flex-1 text-sm font-semibold tracking-tight">AI 图形化编程</b>
+          <span data-board class="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-white/5 px-2 py-1 text-[11.5px] tabular-nums text-zinc-400">检测中…</span>
+          <button data-act="settings" title="设置" aria-label="设置" class="grid size-[30px] place-items-center rounded-lg text-zinc-400 hover:bg-white/5 hover:text-zinc-100">${ICON.gear}</button>
+          <button data-act="toggle" title="收起" aria-label="收起" class="grid size-[30px] place-items-center rounded-lg text-zinc-400 hover:bg-white/5 hover:text-zinc-100">${ICON.collapse}</button>
+        </header>
+
+        <div data-feed class="m3e-scroll flex flex-1 flex-col gap-3 overflow-y-auto px-3 py-3.5 text-[13px] leading-relaxed"></div>
+
+        <div data-settings class="hidden flex-col gap-2.5 border-t border-white/10 bg-zinc-900 px-3 py-3">
+          <label class="text-xs text-zinc-400" for="m3e-base">LLM Base URL（OpenAI 兼容）</label>
+          <input id="m3e-base" name="baseURL" data-cfg="baseURL" placeholder="https://api.deepseek.com/v1" class="rounded-lg bg-black/40 px-2.5 py-2 text-[12.5px] text-zinc-100 outline-1 ring-1 ring-white/10 placeholder:text-zinc-500 focus-visible:outline-2 focus-visible:outline-blue-500">
+          <label class="text-xs text-zinc-400" for="m3e-key">API Key</label>
+          <input id="m3e-key" name="apiKey" data-cfg="apiKey" type="password" placeholder="sk-..." class="rounded-lg bg-black/40 px-2.5 py-2 text-[12.5px] text-zinc-100 ring-1 ring-white/10 placeholder:text-zinc-500 focus-visible:outline-2 focus-visible:outline-blue-500">
+          <label class="text-xs text-zinc-400" for="m3e-model">模型</label>
+          <input id="m3e-model" name="model" data-cfg="model" placeholder="deepseek-chat" class="rounded-lg bg-black/40 px-2.5 py-2 text-[12.5px] text-zinc-100 ring-1 ring-white/10 placeholder:text-zinc-500 focus-visible:outline-2 focus-visible:outline-blue-500">
+          <button data-act="saveCfg" type="button" class="mt-1 self-end rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500">保存设置</button>
         </div>
-        <div class="row"><span class="muted" data-status></span></div>
-        <div class="plan" data-plan style="display:none"></div>
-        <div class="well log" data-log>就绪。</div>
-        <div class="well preview" data-preview style="display:none"></div>
-      </div>
-      <div class="settings">
-        <label>LLM Base URL (OpenAI 兼容)</label><input data-cfg="baseURL" placeholder="https://api.deepseek.com/v1">
-        <label>API Key</label><input data-cfg="apiKey" type="password" placeholder="sk-...">
-        <label>模型</label><input data-cfg="model" placeholder="deepseek-chat">
-        <button class="primary" data-act="saveCfg">保存设置</button>
+
+        <div class="border-t border-white/10 bg-zinc-950 px-3 py-2.5">
+          <div data-status class="mb-1.5 hidden text-[11.5px] tabular-nums text-zinc-500"></div>
+          <div class="flex items-end gap-2">
+            <textarea data-input rows="2" placeholder="描述需求或提问，例如：按A键显示温度 / 把刚才那块改成红色（/help 查看命令）" class="m3e-scroll max-h-40 flex-1 resize-none rounded-xl bg-zinc-900 px-3 py-2 text-[13px] leading-relaxed text-zinc-100 ring-1 ring-white/10 placeholder:text-zinc-500 focus-visible:outline-2 focus-visible:-outline-offset-1 focus-visible:outline-blue-500"></textarea>
+            <button data-act="send" type="button" title="发送" class="grid size-9 shrink-0 place-items-center rounded-xl bg-blue-600 text-white hover:bg-blue-500 disabled:bg-white/5 disabled:text-zinc-600">${ICON.send}</button>
+            <button data-act="stop" type="button" title="停止" class="hidden size-9 shrink-0 place-items-center rounded-xl bg-white/5 text-zinc-300 hover:bg-white/10">${ICON.stop}</button>
+          </div>
+        </div>
       </div>
     </div>`;
   doc.body.appendChild(host);
 
   const $ = (s) => root.querySelector(s);
-  const wrap = $(".wrap");
-  const launcher = $(".launcher");
-  const ta = $("textarea");
-  const logEl = $("[data-log]");
+  const wrap = $("[data-wrap]");
+  const launcher = $("[data-act='reopen']");
+  const feed = $("[data-feed]");
+  const input = $("[data-input]");
   const statusEl = $("[data-status]");
-  const previewEl = $("[data-preview]");
-  const genBtn = $('[data-act="gen"]');
   const boardEl = $("[data-board]");
-  const planEl = $("[data-plan]");
+  const sendBtn = $("[data-act='send']");
+  const stopBtn = $("[data-act='stop']");
+  const settings = $("[data-settings]");
 
-  const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
-  const log = (m, cls = "") => { logEl.innerHTML += `\n${cls ? `<span class="${cls}">${esc(m)}</span>` : esc(m)}`; logEl.scrollTop = logEl.scrollHeight; };
-  const setStatus = (m, cls = "") => { statusEl.className = "muted " + cls; statusEl.textContent = m; };
-  const setBusy = (b) => { genBtn.disabled = b; genBtn.textContent = b ? "生成中…" : "生成并应用"; };
-  const showPreview = (txt) => { previewEl.style.display = "block"; previewEl.textContent = txt; };
-  const setHidden = (h) => { wrap.classList.toggle("hidden", h); launcher.classList.toggle("show", h); };
-  const setBoard = (text, cls = "") => { boardEl.className = "badge " + cls; boardEl.textContent = text.replace(/^[●⚠]\s*/, ""); };
-  const setGenerateEnabled = (en) => { genBtn.disabled = !en; genBtn.style.opacity = en ? "1" : ".5"; };
+  const scrollToEnd = () => { feed.scrollTop = feed.scrollHeight; };
+  const append = (el) => { feed.appendChild(el); scrollToEnd(); return el; };
+  const div = (cls, html) => { const d = doc.createElement("div"); if (cls) d.className = cls; if (html != null) d.innerHTML = html; return d; };
 
-  /** Render the model's edit plan. `items`: [{ text, opIndex, anchor?: {options:[{key,label}], selectedKey} }].
-   *  onAnchorChange(opIndex, key) is called when a落点 dropdown changes. */
-  function setPlan(items, onAnchorChange) {
-    planEl.innerHTML = "";
-    if (!items || !items.length) { planEl.style.display = "none"; return; }
-    planEl.style.display = "flex";
-    for (const it of items) {
-      const div = doc.createElement("div");
-      div.className = "item";
-      div.innerHTML = `<div class="desc">${it.text}</div>`;
-      if (it.anchor) {
-        const lbl = doc.createElement("div"); lbl.className = "lbl"; lbl.textContent = "落点";
-        const sel = doc.createElement("select");
-        for (const o of it.anchor.options) {
-          const opt = doc.createElement("option");
-          opt.value = o.key; opt.textContent = o.label;
-          if (o.key === it.anchor.selectedKey) opt.selected = true;
-          sel.appendChild(opt);
-        }
-        sel.addEventListener("change", () => onAnchorChange?.(it.opIndex, sel.value));
-        div.appendChild(lbl); div.appendChild(sel);
-      }
-      planEl.appendChild(div);
-    }
+  // ---- message primitives ----
+
+  function addUser(text) {
+    const row = div("flex justify-end");
+    row.appendChild(div("max-w-[85%] whitespace-pre-wrap rounded-2xl bg-blue-600 px-3 py-2 text-[13px] text-white", esc(text)));
+    return append(row);
   }
-  const clearPlan = () => { planEl.innerHTML = ""; planEl.style.display = "none"; };
 
-  // Keep keystrokes typed inside our panel from reaching the host's global
-  // shortcut handlers (Blockly deletes blocks on Backspace/Delete; because our
-  // inputs live in a shadow DOM the host sees the host element, not a text
-  // field, and would preventDefault the key). Stop them at the shadow root.
-  ["keydown", "keyup", "keypress"].forEach((t) =>
-    root.addEventListener(t, (e) => e.stopPropagation()));
+  function notice(text, kind = "") {
+    const tone = kind === "err" ? "text-red-400" : kind === "ok" ? "text-emerald-400" : "text-zinc-500";
+    return append(div(`text-center text-[11.5px] ${tone}`, esc(text)));
+  }
+
+  function beginAssistant() {
+    const bubble = div("m3e-prose m3e-caret max-w-full text-[13px] text-zinc-100");
+    append(bubble);
+    let raw = "";
+    return {
+      el: bubble,
+      delta(t) { raw += t; bubble.textContent = raw; scrollToEnd(); },
+      text: () => raw,
+      done(finalText) {
+        raw = finalText != null ? finalText : raw;
+        bubble.classList.remove("m3e-caret");
+        bubble.innerHTML = renderMarkdown(raw);
+        scrollToEnd();
+      },
+    };
+  }
+
+  /** A tool-call card (think / search / edit / run / todos). */
+  function toolCard({ icon = "·", title, body = "", tone = "" }) {
+    const ring = tone === "err" ? "ring-red-500/30" : tone === "ok" ? "ring-emerald-500/25" : "ring-white/10";
+    const card = div(`rounded-lg bg-zinc-900/60 p-2.5 ring-1 ${ring}`);
+    card.innerHTML =
+      `<div class="flex items-center gap-1.5 text-[12px] font-medium text-zinc-300"><span class="text-zinc-500">${esc(icon)}</span><span>${esc(title)}</span></div>` +
+      (body ? `<div data-body class="mt-1 text-[12px] text-zinc-400"></div>` : "");
+    if (body) card.querySelector("[data-body]").textContent = body;
+    append(card);
+    return {
+      el: card,
+      setBody(text, mono = false) {
+        let b = card.querySelector("[data-body]");
+        if (!b) { b = div("mt-1 text-[12px] text-zinc-400"); card.appendChild(b); }
+        b.className = mono ? "mt-1 m3e-scroll max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-black/40 p-2 font-mono text-[11px] text-zinc-300" : "mt-1 text-[12px] text-zinc-400";
+        b.textContent = text;
+        scrollToEnd();
+      },
+      setTone(t) {
+        card.className = `rounded-lg bg-zinc-900/60 p-2.5 ring-1 ${t === "err" ? "ring-red-500/30" : t === "ok" ? "ring-emerald-500/25" : "ring-white/10"}`;
+      },
+    };
+  }
+
+  /** Render/refresh the task checklist as a single card kept at a stable node. */
+  let todoCard = null;
+  function setTodos(todos) {
+    if (!todos || !todos.length) { todoCard?.el.remove(); todoCard = null; return; }
+    const mark = { completed: "✓", in_progress: "▸", pending: "○" };
+    const color = { completed: "text-emerald-400", in_progress: "text-blue-400", pending: "text-zinc-500" };
+    const rows = todos
+      .map((t) => `<div class="flex items-start gap-1.5 text-[12px] ${t.status === "completed" ? "text-zinc-500 line-through" : "text-zinc-300"}"><span class="${color[t.status]}">${mark[t.status] || "○"}</span><span>${esc(t.title)}</span></div>`)
+      .join("");
+    const html = `<div class="mb-1 text-[11px] font-medium uppercase tracking-wide text-zinc-500">任务清单</div>${rows}`;
+    if (!todoCard) { todoCard = { el: append(div("rounded-lg bg-zinc-900/60 p-2.5 ring-1 ring-white/10")) }; }
+    todoCard.el.innerHTML = html;
+    scrollToEnd();
+  }
+
+  /** Inline confirmation card → resolves 'once' | 'session' | false. */
+  function confirm({ title, detail }) {
+    return new Promise((resolve) => {
+      const card = div("rounded-lg bg-amber-500/10 p-2.5 ring-1 ring-amber-500/30");
+      card.innerHTML =
+        `<div class="text-[12.5px] font-medium text-amber-200">${esc(title)}</div>` +
+        (detail ? `<div class="mt-1 text-[12px] text-zinc-300">${esc(detail)}</div>` : "") +
+        `<div class="mt-2 flex gap-2">
+          <button data-c="once" class="rounded-lg bg-blue-600 px-2.5 py-1 text-[12px] font-medium text-white hover:bg-blue-500">允许一次</button>
+          <button data-c="session" class="rounded-lg bg-white/5 px-2.5 py-1 text-[12px] text-zinc-200 hover:bg-white/10">本会话允许</button>
+          <button data-c="no" class="rounded-lg bg-white/5 px-2.5 py-1 text-[12px] text-zinc-300 hover:bg-white/10">拒绝</button>
+        </div>`;
+      append(card);
+      card.addEventListener("click", (e) => {
+        const c = e.target.closest?.("[data-c]")?.getAttribute("data-c");
+        if (!c) return;
+        card.querySelectorAll("button").forEach((b) => (b.disabled = true));
+        const label = c === "once" ? "已允许一次" : c === "session" ? "本会话允许" : "已拒绝";
+        card.className = "rounded-lg bg-zinc-900/60 p-2.5 ring-1 ring-white/10";
+        card.innerHTML = `<div class="text-[12px] text-zinc-400">${esc(title)} — ${label}</div>`;
+        resolve(c === "no" ? false : c);
+      });
+    });
+  }
+
+  // ---- header / status helpers ----
+  const setBoard = (text, cls = "") => {
+    boardEl.textContent = text.replace(/^[●⚠]\s*/, "");
+    boardEl.className = `inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2 py-1 text-[11.5px] tabular-nums ${cls === "ok" ? "bg-emerald-500/15 text-emerald-300" : cls === "err" ? "bg-red-500/15 text-red-300" : "bg-white/5 text-zinc-400"}`;
+  };
+  const setStatus = (m, cls = "") => {
+    statusEl.classList.toggle("hidden", !m);
+    statusEl.className = `mb-1.5 text-[11.5px] tabular-nums ${cls === "err" ? "text-red-400" : cls === "ok" ? "text-emerald-400" : "text-zinc-500"} ${m ? "" : "hidden"}`;
+    statusEl.textContent = m || "";
+  };
+  const setBusy = (b) => {
+    sendBtn.disabled = b;
+    sendBtn.classList.toggle("hidden", b);
+    stopBtn.classList.toggle("hidden", !b);
+    stopBtn.classList.toggle("grid", b);
+  };
+  const setHidden = (h) => { wrap.style.transform = h ? "translateX(100%)" : "translateX(0)"; launcher.classList.toggle("hidden", !h); };
+  const setGenerateEnabled = (en) => { sendBtn.disabled = !en; sendBtn.style.opacity = en ? "1" : ".5"; };
+
+  // ---- input handling ----
+  function submit() {
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = "";
+    opts.onSend?.({ text });
+  }
+
+  // Keep keystrokes inside the panel from reaching the host's global shortcuts.
+  ["keydown", "keyup", "keypress"].forEach((t) => root.addEventListener(t, (e) => e.stopPropagation()));
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+  });
 
   root.addEventListener("click", (e) => {
-    const el = e.target.closest?.("[data-act]") || e.target;
-    const act = el.getAttribute?.("data-act");
+    const act = e.target.closest?.("[data-act]")?.getAttribute("data-act");
     if (act === "toggle") setHidden(true);
-    if (act === "reopen") setHidden(false);
-    if (act === "settings") $(".settings").classList.toggle("show");
-    if (act === "gen") opts.onGenerate?.({ request: ta.value.trim() });
-    if (act === "undo") opts.onUndo?.();
-    if (act === "saveCfg") {
+    else if (act === "reopen") setHidden(false);
+    else if (act === "settings") settings.classList.toggle("hidden");
+    else if (act === "send") submit();
+    else if (act === "stop") opts.onStop?.();
+    else if (act === "saveCfg") {
       const c = {};
       root.querySelectorAll("[data-cfg]").forEach((i) => { c[i.getAttribute("data-cfg")] = i.value.trim(); });
       opts.onSaveConfig?.(c);
-      $(".settings").classList.remove("show");
+      settings.classList.add("hidden");
     }
   });
 
@@ -215,8 +244,13 @@ export function createPanel(opts) {
   }
 
   return {
-    host, root, log, setStatus, setBusy, showPreview, loadConfig, setHidden,
-    setBoard, setGenerateEnabled, setPlan, clearPlan,
-    clearLog: () => (logEl.textContent = ""),
+    host, root,
+    // view primitives
+    addUser, notice, beginAssistant, toolCard, setTodos, confirm,
+    // header / status
+    setBoard, setStatus, setBusy, setHidden, setGenerateEnabled, loadConfig,
+    openSettings: () => settings.classList.remove("hidden"),
+    clearFeed: () => { feed.innerHTML = ""; todoCard = null; },
+    focusInput: () => input.focus(),
   };
 }
