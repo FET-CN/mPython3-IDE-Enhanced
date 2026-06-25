@@ -31,8 +31,9 @@ export async function generateProgram(o) {
   onProgress({ phase: "version", version, board: boardInfo.label });
 
   onProgress({ phase: "retrieve" });
-  const retrieved = retrieve(o.request, o.index, { topN: o.topN ?? 80, board: boardInfo.board, preferGroups: ["mpython3"] });
-  const core = coreTypes(o.index, boardInfo.board);
+  const visibleSet = o.visibleSet || null;
+  const retrieved = retrieve(o.request, o.index, { topN: o.topN ?? 80, board: boardInfo.board, preferGroups: ["mpython3"], visibleSet });
+  const core = coreTypes(o.index, boardInfo.board, visibleSet);
 
   let boardDocs = [];
   if (o.knowledge?.loadDoc) {

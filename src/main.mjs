@@ -83,9 +83,10 @@ async function boot() {
     data = await loadData();
     version = board.version !== "unknown" ? board.version
       : resolveVersion({ master: currentMaster(), triggers: data.knowledge?.triggers });
+    const visibleSet = data.visible?.forBoard(board.board) || null;
     const system = buildAgentSystem({
       catalog: data.catalog,
-      coreTypes: coreTypes(data.index, board.board),
+      coreTypes: coreTypes(data.index, board.board, visibleSet),
       preferredTypes: preferredTypes(data.index, board.board),
       seeds: data.seeds,
       core: data.knowledge?.core,

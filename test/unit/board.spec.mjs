@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { retrieve, coreTypes, boardAllows, preferredTypes } from "../../src/kb/retriever.mjs";
 import { boardFromMaster } from "../../src/kb/knowledge.mjs";
 import { buildAgentSystem } from "../../src/ctx/agent-prompt.mjs";
+import { makeVisible } from "../../src/runtime/data.mjs";
 import { catalogBuilt, loadCatalogMap } from "../helpers/catalog.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -60,9 +61,10 @@ d("board-filtered retrieval (requires built catalog)", () => {
     // Past bug: mpython_display_* + math_trig fell past the ~60-card core cap
     // (crowded by AIcamera/AMIGO foreign-family blocks wrongly flagged core),
     // so the model never saw display_fill's real field and hallucinated SIN/COS.
+    // Names are the CURRENT side-palette blocks (display_circle → display_shape_circle).
     const first60 = new Set(coreTypes(index, "mPython").slice(0, 60));
     for (const t of [
-      "mpython_display_fill", "mpython_display_Show", "mpython_display_circle",
+      "mpython_display_fill", "mpython_display_Show", "mpython_display_shape_circle",
       "mpython_display_line", "math_trig",
     ]) {
       expect(first60.has(t), `${t} missing from first 60 core cards`).toBe(true);
@@ -162,5 +164,51 @@ d("mpython3 新一代积木偏好 (requires built catalog)", () => {
     expect(sys).toContain("新一代积木 (mpython3");
     expect(sys).toContain("mpython3_button_event");
     expect(sys).toContain("优先使用 mpython3");
+  });
+});
+
+d("toolbox 可见性 (requires built catalog + toolbox.visible.json)", () => {
+  const index = JSON.parse(readFileSync(resolve(ROOT, "data/catalog.index.json"), "utf8"));
+  const visRaw = JSON.parse(readFileSync(resolve(ROOT, "data/toolbox.visible.json"), "utf8"));
+  const vis = makeVisible(visRaw);
+  const catTypes = new Set(index.map((b) => b.type));
+
+  it("snapshot has per-board sets, all ⊂ catalog", () => {
+    expect(vis.has).toBe(true);
+    for (const board of ["mPython", "mPython_V3"]) {
+      const set = vis.forBoard(board);
+      expect(set && set.size).toBeGreaterThan(100);
+      for (const t of set) expect(catTypes.has(t), `${t} not in catalog`).toBe(true);
+    }
+    expect(vis.forBoard("nope")).toBeNull(); // unknown board → no filtering
+  });
+
+  it("coreTypes ∩ visible drops retired blocks and keeps live replacements", () => {
+    const v2 = vis.forBoard("mPython");
+    const core = coreTypes(index, "mPython", v2);
+    // retired → gone
+    for (const t of ["mpython_set_RGB", "mpython_display_circle", "mpython_button_is_pressed", "logic_operation"]) {
+      expect(core).not.toContain(t);
+    }
+    // current side-palette replacements → present (force-included via priority spine
+    // even though some carry core:false in the catalog)
+    for (const t of ["mpython_set_rgb_list_color", "mpython_display_shape_circle", "mpython_button_pressed", "logic_operation_2", "math_random_int_time"]) {
+      expect(core, `${t} should be in visible-filtered core`).toContain(t);
+    }
+  });
+
+  it("coreTypes without a visible set keeps legacy behavior (backward compatible)", () => {
+    const core = coreTypes(index, "mPython");
+    expect(core).toContain("mpython_display_DispChar"); // still works with no snapshot
+  });
+
+  it("retrieve biases toward side-palette-visible blocks", () => {
+    const v2 = vis.forBoard("mPython");
+    const withVis = retrieve("设置 RGB 灯颜色", index, { topN: 30, board: "mPython", visibleSet: v2 }).types;
+    // the live RGB block should outrank the retired mpython_set_RGB
+    const liveIdx = withVis.findIndex((t) => t === "mpython_set_rgb_list_color");
+    const oldIdx = withVis.findIndex((t) => t === "mpython_set_RGB");
+    expect(liveIdx).toBeGreaterThanOrEqual(0);
+    if (oldIdx >= 0) expect(liveIdx).toBeLessThan(oldIdx);
   });
 });

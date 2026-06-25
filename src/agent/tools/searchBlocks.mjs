@@ -29,7 +29,8 @@ export const searchBlocksTool = {
     const catalog = ctx?.data?.catalog;
     if (!index || !catalog) return { is_error: true, content: "知识库未就绪。" };
     const limit = Math.max(1, Math.min(Number(args?.limit) || 30, 80));
-    const { types } = retrieve(query, index, { topN: limit, board: ctx.board?.board, preferGroups: ["mpython3"] });
+    const visibleSet = ctx?.data?.visible?.forBoard(ctx.board?.board) || null;
+    const { types } = retrieve(query, index, { topN: limit, board: ctx.board?.board, preferGroups: ["mpython3"], visibleSet });
     const schemas = [];
     for (const t of types) {
       const s = catalog.get(t);

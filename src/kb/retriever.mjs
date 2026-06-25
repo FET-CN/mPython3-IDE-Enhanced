@@ -47,7 +47,7 @@ export function boardAllows(bd, board) {
 /**
  * @param request user's Chinese request string
  * @param index   parsed catalog.index.json (array)
- * @param opts { topN=80, board?, groups?, preferGroups? }
+ * @param opts { topN=80, board?, groups?, preferGroups?, visibleSet? }
  * @returns { types, groups, scored }
  */
 export function retrieve(request, index, opts = {}) {
@@ -56,6 +56,7 @@ export function retrieve(request, index, opts = {}) {
   const reqLatin = latinTokens(request);
   const restrict = opts.groups ? new Set(opts.groups) : null;
   const prefer = opts.preferGroups ? new Set(opts.preferGroups) : null;
+  const visible = opts.visibleSet || null;
   const board = opts.board || null;
 
   const scored = [];
@@ -65,6 +66,7 @@ export function retrieve(request, index, opts = {}) {
     let s = scoreEntry(e, reqNgrams, reqLatin);
     if (s <= 0) continue;
     if (prefer && prefer.has(e.group)) s += 3;
+    if (visible && visible.has(e.type)) s += 3; // bias toward side-palette-visible blocks
     scored.push({ type: e.type, score: s, group: e.group });
   }
   scored.sort((a, b) => b.score - a.score || a.type.length - b.type.length);
@@ -86,38 +88,56 @@ export function groupCatalog(index) {
 }
 
 /**
- * Priority spine of the core vocabulary. These must survive the core-card cap
- * (assemble.mjs slices coreTypes to ~60) because they are the primitives almost
- * every program needs — control flow, math/logic/variables, and the v2 OLED
- * drawing stack. Without this, alphabetical/index ordering can push
- * mpython_display_* past the cap and the model never sees their real fields.
+ * Priority spine of the core vocabulary. Two jobs:
+ *  1) Survive the core-card cap (assemble.mjs slices coreTypes to ~60) — these are
+ *     the primitives almost every program needs (control flow, math/logic/vars,
+ *     the OLED drawing stack).
+ *  2) Force-include: a block listed here counts as core even if its catalog
+ *     `core` flag is false (some renamed live blocks like logic_operation_2 /
+ *     math_random_int_time are not flagged core).
+ * Names are the CURRENT side-palette blocks (verified against data/toolbox.visible.json):
+ * the old set_RGB / display_circle / logic_operation / math_random_int variants were
+ * retired online and replaced by the *_rgb_list_* / display_shape_* / *_2 / *_time forms.
  */
 const CORE_PRIORITY = [
   // control flow
   "controls_if", "controls_for", "controls_whileUntil", "controls_repeat_ext",
   "controls_flow_statements",
   // logic
-  "logic_compare", "logic_operation", "logic_boolean", "logic_negate",
+  "logic_compare", "logic_operation_2", "logic_boolean", "logic_negate",
   // math
   "math_number", "math_arithmetic", "math_single", "math_trig", "math_modulo",
-  "math_round", "math_random_int", "math_constrain", "math_map",
+  "math_round", "math_random_int_time", "math_constrain",
   // text + variables
   "text", "text_join", "text_print",
   "variables_set", "variables_get", "math_change",
-  // mpython timing / actuators / inputs
-  "mpython_sleep_ms", "mpython_set_RGB", "mpython_rgb_set", "mpython_rgb_clear",
-  "mpython_Interrupt_AB", "mpython_button_is_pressed", "mpython_button_both_pressed",
-  // v2 OLED drawing stack (the subject of most display requests)
+  // mpython timing / actuators / inputs (current side-palette names)
+  "mpython_sleep_ms", "mpython_set_rgb_list_color", "mpython_set_rgb_list_number",
+  "mpython_rgb_list", "mpython_off_rgb_list", "mpython_button_pressed",
+  // OLED drawing stack (current names; V2 side palette)
   "mpython_display_fill", "mpython_display_Show", "mpython_display_DispChar",
-  "mpython_display_DispChar_5lines", "mpython_display_circle",
-  "mpython_display_fill_circle", "mpython_display_line", "mpython_display_pixel",
-  "mpython_display_fill_rect", "mpython_display_RoundRect",
+  "mpython_display_DispChar_5lines", "mpython_display_shape_circle",
+  "mpython_display_line", "mpython_display_pixel",
+  "mpython_display_shape_rect", "mpython_display_shape_triangle",
+  "mpython_display_RoundRect",
 ];
 const PRIORITY_RANK = new Map(CORE_PRIORITY.map((t, i) => [t, i]));
 
-/** Always-on core vocabulary types (L2), board-filtered, priority-ordered. */
-export function coreTypes(index, board = null) {
-  const types = index.filter((e) => e.core && boardAllows(e.bd, board)).map((e) => e.type);
+/**
+ * Always-on core vocabulary types (L2), board-filtered, priority-ordered.
+ * @param visibleSet optional Set of side-palette-visible types for this board
+ *   (from data/toolbox.visible.json). When given, core vocab is intersected with
+ *   it so retired/deprecated blocks no longer reach the model. Null → no filter.
+ */
+export function coreTypes(index, board = null, visibleSet = null) {
+  const types = index
+    .filter(
+      (e) =>
+        (e.core || PRIORITY_RANK.has(e.type)) &&
+        boardAllows(e.bd, board) &&
+        (!visibleSet || visibleSet.has(e.type)),
+    )
+    .map((e) => e.type);
   return types.sort((a, b) => {
     const ra = PRIORITY_RANK.has(a) ? PRIORITY_RANK.get(a) : Infinity;
     const rb = PRIORITY_RANK.has(b) ? PRIORITY_RANK.get(b) : Infinity;

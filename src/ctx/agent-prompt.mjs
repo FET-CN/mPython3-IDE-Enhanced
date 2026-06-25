@@ -41,7 +41,18 @@ export const TOOL_GUIDE = `# 工具一览
 - think（只读）：记录思考，不产生副作用。
 - update_todos（只读）：维护可见任务清单。`;
 
-// Adapter: OPS_SPEC was written for a single-shot "output one json block" flow.
+// Old→new rename map: blocks retired from the live side palette and their
+// current replacements (verified against the per-board toolbox snapshot). Stable,
+// cacheable. Keeps the model off deprecated blocks it may know from training.
+export const RETIRED_BLOCKS = `# 已下架的旧积木（改用新版）
+下列旧积木已从积木栏移除，**不要使用**，请改用对应的新版积木：
+- 显示 mpython_display_circle / fill_circle → mpython_display_shape_circle；mpython_display_rect / fill_rect → mpython_display_shape_rect；mpython_display_triangle / fill_triangle → mpython_display_shape_triangle
+- RGB 灯 mpython_set_RGB(_all/_color) → mpython_set_rgb_list_color；按 RGB 值设 → mpython_set_rgb_list_number；mpython_off_RGB / rgb_clear → mpython_off_rgb_list
+- 按键 mpython_button_is_pressed / both_pressed / Interrupt_AB → mpython_button_pressed，或事件写法 mpython3_button_event
+- 逻辑 logic_operation → logic_operation_2；随机数 math_random_int → math_random_int_time
+（不确定新名时用 search_blocks 检索确认；优先选积木栏里实际存在的积木。）`;
+
+
 // Under tool-calling, the same op grammar applies but the channel is the
 // edit_blocks tool argument. Make that explicit, then reuse OPS_SPEC verbatim.
 const OPS_ADAPTER = `# 编辑算子语法（用于 edit_blocks 工具的 ops 参数）
@@ -87,6 +98,7 @@ export function buildAgentSystem(o) {
     renderCore(o.core),
     renderAntipatterns(o.antipatterns),
     renderCardSection("新一代积木 (mpython3 · 优先使用)", preferredVocab),
+    RETIRED_BLOCKS,
     renderCardSection("核心词汇 (常用积木)", coreVocab),
     renderSeeds(o.seeds),
   ].filter(Boolean).join("\n\n---\n\n");
