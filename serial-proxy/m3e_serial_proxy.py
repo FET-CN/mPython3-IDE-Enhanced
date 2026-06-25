@@ -31,11 +31,14 @@
 import argparse
 import asyncio
 import json
+import logging
 import threading
 
 import serial
 from serial.tools import list_ports
 import websockets
+
+log = logging.getLogger("m3e-serial-proxy")
 
 # 掌控板常见 USB-UART 芯片的厂商 ID：303A=Espressif(原生USB)，1A86=CH340/CH9102。
 BOARD_VIDS = {0x303A, 0x1A86}
@@ -70,7 +73,7 @@ def pick_default_path(explicit):
 async def handle(ws, args):
     """单个 WebSocket 连接：一次服务一块板。"""
     loop = asyncio.get_running_loop()
-    state = {"ser": None, "reader": None, "running": False}
+    state = {"ser": None, "reader": None, "running": False, "rx": 0, "tx": 0}
 
     def stop_reader():
         state["running"] = False
@@ -96,10 +99,15 @@ async def handle(ws, args):
                 n = ser.in_waiting
                 data = ser.read(n or 1)  # timeout=0.05 → 无数据时最多阻塞 50ms，避免空转
             except Exception as e:
+                log.warning("串口读取失败：%s", e)
                 _schedule(ws.send(json.dumps({"type": "error", "message": f"串口读取失败：{e}"})))
                 break
             if not data:
                 continue
+            if state["rx"] == 0:
+                log.info("◀ 串口首批数据 %d 字节（板子→浏览器 通）", len(data))
+            state["rx"] += len(data)
+            log.debug("◀ rx %dB 累计 %d: %r", len(data), state["rx"], data[:40])
             fut = _schedule(ws.send(data))
             if fut is None:
                 break
@@ -128,6 +136,7 @@ async def handle(ws, args):
                 write_timeout=3,
             )
         except Exception as e:
+            log.warning("打开串口失败：%s", e)
             await ws.send(json.dumps({"type": "error", "message": f"打开串口失败：{e}"}))
             return
         state["ser"] = ser
@@ -136,7 +145,7 @@ async def handle(ws, args):
         state["reader"] = t
         t.start()
         await ws.send(json.dumps({"type": "opened", "path": path, "baudRate": ser.baudrate}))
-        print(f"[m3e-serial-proxy] opened {path} @ {ser.baudrate}")
+        log.info("opened %s @ %d", path, ser.baudrate)
 
     try:
         async for msg in ws:
@@ -146,8 +155,14 @@ async def handle(ws, args):
                 if ser is not None:
                     try:
                         ser.write(msg)
+                        if state["tx"] == 0:
+                            log.info("▶ 首次写入串口 %d 字节（浏览器→板子 通）", len(msg))
+                        state["tx"] += len(msg)
+                        log.debug("▶ tx %dB 累计 %d: %r", len(msg), state["tx"], bytes(msg[:40]))
                     except Exception as e:
                         await ws.send(json.dumps({"type": "error", "message": f"串口写入失败：{e}"}))
+                else:
+                    log.warning("收到写数据但串口未打开，已丢弃 %d 字节", len(msg))
                 continue
 
             # 文本帧 = 控制 JSON
@@ -174,13 +189,18 @@ async def handle(ws, args):
                         ser.rts = bool(m["requestToSend"])
                     if "break" in m:
                         ser.break_condition = bool(m["break"])
+                    log.info("⚙ setSignals DTR=%s RTS=%s（板子复位脉冲）",
+                             getattr(ser, "dtr", None), getattr(ser, "rts", None))
                 except Exception as e:
+                    log.warning("setSignals 失败：%s", e)
                     await ws.send(json.dumps({"type": "error", "message": f"设置信号失败：{e}"}))
+            else:
+                log.debug("未知控制消息：%s", t)
     except websockets.ConnectionClosed:
         pass
     finally:
         close_serial()
-        print("[m3e-serial-proxy] connection closed")
+        log.info("连接关闭（本次会话 rx=%d tx=%d 字节）", state["rx"], state["tx"])
 
 
 def parse_args(argv=None):
@@ -189,6 +209,7 @@ def parse_args(argv=None):
     ap.add_argument("--port", type=int, default=8765, help="WebSocket 监听端口（默认 8765）")
     ap.add_argument("--port-path", default=None, help="固定串口路径（如 /dev/ttyUSB0、COM3）；缺省则自动识别")
     ap.add_argument("--baud", type=int, default=115200, help="默认波特率（默认 115200）")
+    ap.add_argument("-v", "--verbose", action="store_true", help="打印每一帧串口收发（调试用）")
     return ap.parse_args(argv)
 
 
@@ -197,17 +218,22 @@ async def main_async(args):
     async with websockets.serve(
         lambda ws, *_: handle(ws, args), args.host, args.port, max_size=None
     ):
-        print(f"[m3e-serial-proxy] listening on ws://{args.host}:{args.port}")
-        print("[m3e-serial-proxy] 在书签设置里把「串口代理地址」填成上面这个地址即可。")
+        log.info("listening on ws://%s:%d", args.host, args.port)
+        log.info("在书签设置里把「串口代理地址」填成上面这个地址即可。")
         await asyncio.Future()  # run forever
 
 
 def main(argv=None):
     args = parse_args(argv)
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)-5s [%(name)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
     try:
         asyncio.run(main_async(args))
     except KeyboardInterrupt:
-        print("\n[m3e-serial-proxy] bye")
+        log.info("bye")
 
 
 if __name__ == "__main__":

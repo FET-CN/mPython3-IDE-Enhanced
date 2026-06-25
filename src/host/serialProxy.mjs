@@ -7,6 +7,14 @@
 // 与代理的约定：控制消息走「文本帧（JSON）」，串口原始字节走「二进制帧」。
 // 仅当成功连上代理后才覆盖 navigator.serial；连不上则抛错、保持页面原状。
 
+// 诊断日志：默认开启，设 window.__M3E_SERIAL_DEBUG__ = false 可关；= "verbose" 打印每帧。
+const DBG = (...a) => {
+  try {
+    if (globalThis.window?.__M3E_SERIAL_DEBUG__ !== false) console.info("[m3e-serial]", ...a);
+  } catch {}
+};
+const VERBOSE = () => { try { return globalThis.window?.__M3E_SERIAL_DEBUG__ === "verbose"; } catch { return false; } };
+
 /** 维护到代理的单条 WebSocket，做控制请求/响应关联与二进制帧分发。 */
 class ProxyLink {
   constructor(url) {
@@ -17,6 +25,8 @@ class ProxyLink {
     this.rxBuffer = [];       // controller 就绪前到达的二进制帧
     this.onStatus = null;     // 非请求型 error/事件回调
     this.onClose = null;
+    this.rxBytes = 0;         // 串口→浏览器 累计字节（诊断）
+    this.txBytes = 0;         // 浏览器→串口 累计字节（诊断）
   }
 
   connect(timeout = 6000) {
@@ -58,8 +68,12 @@ class ProxyLink {
     }
     // 二进制帧 = 串口读出的原始字节
     const u8 = new Uint8Array(data);
+    const first = this.rxBytes === 0;
+    this.rxBytes += u8.length;
+    if (first) DBG("◀ 收到串口首批数据", u8.length, "字节（板子→浏览器 链路通）");
+    if (VERBOSE()) DBG("◀ rx", u8.length, "字节，累计", this.rxBytes);
     if (this.rxController) {
-      try { this.rxController.enqueue(u8); } catch {}
+      try { this.rxController.enqueue(u8); } catch (e) { DBG("enqueue 失败", e?.message); }
     } else {
       this.rxBuffer.push(u8);
     }
@@ -86,7 +100,13 @@ class ProxyLink {
   }
 
   sendJSON(obj) { try { this.ws.send(JSON.stringify(obj)); } catch {} }
-  sendBinary(u8) { try { this.ws.send(u8); } catch {} }
+  sendBinary(u8) {
+    const first = this.txBytes === 0;
+    this.txBytes += u8.length;
+    if (first) DBG("▶ 首次写入串口", u8.length, "字节（浏览器→板子 链路通）");
+    if (VERBOSE()) DBG("▶ tx", u8.length, "字节，累计", this.txBytes);
+    try { this.ws.send(u8); } catch (e) { DBG("ws.send 失败", e?.message); }
+  }
 
   attachReader(controller) {
     this.rxController = controller;
@@ -114,15 +134,19 @@ function makeSerialPort(link, info) {
     get writable() { return writable; },
 
     async open({ baudRate = 115200 } = {}) {
+      DBG("open", info.path, "@", baudRate);
       const res = await link.request(
         { type: "open", path: info.path, baudRate },
         ["opened", "error"],
       );
-      if (res.type === "error") throw new Error(res.message || "打开串口失败");
+      if (res.type === "error") { DBG("open 失败:", res.message); throw new Error(res.message || "打开串口失败"); }
+      DBG("opened", info.path);
 
+      let pulls = 0;
       readable = new ReadableStream({
         start: (controller) => link.attachReader(controller),
-        cancel: () => link.detachReader(),
+        pull: () => { pulls++; if (pulls <= 2) DBG("readable.pull #" + pulls, "（站点已在读取串口流）"); },
+        cancel: () => { DBG("readable.cancel（站点取消了读取）"); link.detachReader(); },
       });
       writable = new WritableStream({
         write: (chunk) => {
@@ -130,9 +154,17 @@ function makeSerialPort(link, info) {
           link.sendBinary(chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk));
         },
       });
+      // 决定性诊断：1.5s 后看站点是否真的锁定/读取了我们的 readable。
+      setTimeout(() => DBG(
+        "诊断：readable.locked =", readable?.locked,
+        "· pull 次数 =", pulls,
+        "· 已收", link.rxBytes, "字节 · 已发", link.txBytes, "字节",
+        readable?.locked ? "→ 站点在读，问题在显示侧" : "→ 站点没读我们的流（读循环没起来）",
+      ), 1500);
     },
 
     async close() {
+      DBG("close", info.path, "（rx", link.rxBytes, "tx", link.txBytes, "字节）");
       try { await link.request({ type: "close" }, ["closed"], 2000); } catch {}
       link.detachReader();
       readable = null;
@@ -145,6 +177,7 @@ function makeSerialPort(link, info) {
       if ("dataTerminalReady" in signals) m.dataTerminalReady = !!signals.dataTerminalReady;
       if ("requestToSend" in signals) m.requestToSend = !!signals.requestToSend;
       if ("break" in signals) m.break = !!signals.break;
+      DBG("setSignals", JSON.stringify(signals), "（板子复位/进 bootloader 靠它）");
       link.sendJSON(m);
     },
     async getSignals() { return { clearToSend: false, dataCarrierDetect: false, dataSetReady: false, ringIndicator: false }; },
@@ -162,12 +195,14 @@ function makeSerial(link, { pickPort }) {
     async requestPort() {
       const res = await link.request({ type: "listPorts" }, ["ports"]);
       const ports = res.ports || [];
+      DBG("requestPort：代理报告", ports.length, "个串口", ports.map((p) => `${p.path}${p.isBoard ? "(板)" : ""}`));
       const boards = ports.filter((p) => p.isBoard);
       let chosen;
       if (boards.length === 1) chosen = boards[0];
       else if (!boards.length && ports.length === 1) chosen = ports[0];
       else chosen = await pickPort?.(ports);
       if (!chosen) throw new DOMException("未选择串口", "NotFoundError");
+      DBG("requestPort：选中", chosen.path);
       const port = makeSerialPort(link, chosen);
       granted.push(port);
       return port;
