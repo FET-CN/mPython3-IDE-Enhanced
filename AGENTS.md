@@ -16,6 +16,7 @@
 - `bun run build` —— 完整重建：catalog + knowledge + **css** + bookmarklet（**需要 `vendor/`，见下文**）
 - `bun run build:bookmarklet` —— 仅从已提交的 `data/` 组装 `dist/`，无需私有数据
 - `bun run build:css` —— 预编译 Tailwind 到 `src/ui/styles.generated.mjs`（见 UI 约束）
+- `bun run dump:toolbox` —— **联网**用 Playwright 抓 online.mpython.cn 两块板的侧边栏可见积木，刷新 `data/toolbox.visible.json`（带时效快照，不入 `build`）
 - `bun run test` —— Vitest 单元/属性测试（T0 层）
 - `bun run verify` —— 提交前快速验证：`build:bookmarklet` + `test`
 - `bun run e2e:smoke` / `e2e:ask` / `e2e:inject` / `e2e:patch` —— Playwright E2E（T2，需访问真实站点）
@@ -51,6 +52,7 @@
 - **类型校验宽松**：`src/xml/validate.mjs` 只标记模型生成的错误，不做严格类型系统。
 - **UI 样式离线编译**：宿主页跑不了 Tailwind 运行时，故 `tools/build-css.mjs` 把 Tailwind 预编译进 `src/ui/styles.generated.mjs`（**已提交**）并内联到 Shadow DOM。改了 `src/ui/**` 的类名后需 `bun run build:css` 重新生成。
 - **图标统一用 SVG**：UI 内**不得出现 unicode emoji**，图标走 `panel.mjs` 的 `ICON` 注册表（按名解析 SVG）。
+- **积木默认偏好「积木栏当前可见」**：积木栏当前展示 `mpython3_*`（事件帽子等）+ 一批改名后的新 `mpython_*`（如 `set_RGB`→`set_rgb_list_color`、`display_circle`→`display_shape_circle`），应优先于已下架旧块。实现两层：① `kb/retriever.preferredTypes()` 始终注入 mpython3「新一代积木」卡片节，`agent-prompt.RETIRED_BLOCKS` 给出旧→新改名清单；② `data/toolbox.visible.json`（按板的侧边栏可见集，**Playwright 抓的带时效快照**）驱动 `coreTypes(index,board,visibleSet)`（核心词汇 ∩ 可见，剔除下架块）与 `retrieve(...,{visibleSet})` 加权。`toolbox.visible.json` 由 `bun run dump:toolbox` **联网**刷新，**不入 `bun run build`**；缺失时优雅降级（不过滤）。
 - **积木默认偏好 mpython3 新一代**：积木栏当前展示的是 `mpython3_*`（事件帽子「当…时」、线程、自定义事件、新版 IoT 接收器），应优先于旧的 `mpython_*` 轮询写法，仅在无新版时退回旧积木。实现：`kb/retriever.preferredTypes()` 始终把这批积木注入系统提示词的「新一代积木」稳定卡片节，`retrieve(..., preferGroups:["mpython3"])` 在检索排序中加权；旧积木**不做整体过滤**（多数无新版等价物，仍是当前积木）。
 
 ## 日志约定

@@ -19,17 +19,19 @@ async function getText(base, path) {
   return res.text();
 }
 
-/** Load everything the pipeline needs. Returns { index, catalog, seeds, knowledge }. */
+/** Load everything the pipeline needs. Returns { index, catalog, seeds, knowledge, visible }. */
 export async function loadData(win = globalThis.window) {
   const base = baseUrl(win);
   if (!base) throw new Error("m3e: 未设置数据基址 (window.__M3E_BASE__)");
-  const [index, full, seedsWrap, core, antipatterns, triggers] = await Promise.all([
+  const [index, full, seedsWrap, core, antipatterns, triggers, visibleRaw] = await Promise.all([
     getJSON(base, "catalog.index.json"),
     getJSON(base, "catalog.full.json"),
     getJSON(base, "fewshot-seeds.json").catch(() => ({ seeds: [] })),
     getJSON(base, "knowledge/core.json"),
     getJSON(base, "knowledge/antipatterns.json"),
     getJSON(base, "knowledge/triggers.json"),
+    // Per-board side-palette visibility snapshot — optional; degrade gracefully.
+    getJSON(base, "toolbox.visible.json").catch(() => null),
   ]);
   const docCache = new Map();
   const knowledge = {
@@ -46,6 +48,23 @@ export async function loadData(win = globalThis.window) {
     catalog: catalogFromArray(full),
     seeds: seedsWrap.seeds || [],
     knowledge,
+    visible: makeVisible(visibleRaw),
+  };
+}
+
+/**
+ * Wrap the toolbox.visible.json payload into { has, forBoard(board) → Set|null }.
+ * forBoard returns null when no snapshot is available, so callers treat "unknown"
+ * as "no visibility filtering" rather than "nothing is visible".
+ */
+export function makeVisible(raw) {
+  const byBoard = raw?.byBoard || {};
+  const sets = new Map();
+  for (const [b, list] of Object.entries(byBoard)) sets.set(b, new Set(list));
+  return {
+    has: sets.size > 0,
+    meta: raw ? { source: raw.source, capturedAt: raw.capturedAt } : null,
+    forBoard: (board) => sets.get(board) || null,
   };
 }
 

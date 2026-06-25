@@ -45,6 +45,14 @@ bun run test:watch          # 开发时监听
 
 拿到后任选其一接入：放进 `./vendor/` 对应子目录，或复制 `.env.example` 为 `.env` 并填好三个路径（Bun 自动加载），再 `bun run build`（catalog + knowledge + css + bookmarklet）。**只提交 `data/`**，不要提交 `vendor/` / `.env`。
 
+### 积木栏可见性快照 `data/toolbox.visible.json`（带时效）
+
+侧边积木栏（默认工具箱）是 IDE 按 `masterControl` 在 JS 里**动态构建**的，静态导出无法还原。`data/toolbox.visible.json` 是用 Playwright 跑真实站点抓到的**按板可见 block type 快照**（V2/V3），用于让检索/核心词汇只偏好「积木栏当前能找到」的积木、剔除已下架旧块。
+
+- 刷新：`bun run dump:toolbox`（**需联网**，访问 online.mpython.cn；无需登录）。**不随 `bun run build`**。
+- 它带 `source`(站点/bundle) + `capturedAt`，定位为**某次快照**——默认工具箱会随站点版本漂移，站点更新后需重抓。
+- 运行时缺失会优雅降级（不做可见性过滤/加权），不影响其余功能。
+
 ## 许可证
 
 本项目采用 **AGPL-3.0-or-later**。提交贡献即表示你同意以同一许可证授权你的改动。

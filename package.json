@@ -29,6 +29,7 @@
     "build:css": "bun tools/build-css.mjs",
     "build:bookmarklet": "bun tools/build-bookmarklet.mjs",
     "build": "bun run build:catalog && bun run build:knowledge && bun run build:css && bun run build:bookmarklet",
+    "dump:toolbox": "bun tools/dump-toolbox.mjs",
     "test": "bunx vitest run",
     "test:watch": "bunx vitest",
     "verify": "bun run build:bookmarklet && bun run test",

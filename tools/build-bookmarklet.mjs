@@ -29,6 +29,9 @@ function assembleData() {
     if (!existsSync(src)) throw new Error(`缺少 ${src}（先运行 build:catalog，或确认已 clone data/）`);
     copyFileSync(src, resolve(DIST_DIR, f));
   }
+  // Optional: per-board toolbox visibility snapshot (refresh via `dump:toolbox`).
+  const vis = resolve(DATA_DIR, "toolbox.visible.json");
+  if (existsSync(vis)) copyFileSync(vis, resolve(DIST_DIR, "toolbox.visible.json"));
   cpSync(resolve(DATA_DIR, "knowledge"), resolve(DIST_DIR, "knowledge"), { recursive: true });
   copyFileSync(
     resolve(__dirname, "data/fewshot-seeds.json"),
