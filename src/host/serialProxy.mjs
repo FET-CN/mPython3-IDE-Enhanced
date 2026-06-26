@@ -27,6 +27,7 @@ class ProxyLink {
     this.onClose = null;
     this.rxBytes = 0;         // 串口→浏览器 累计字节（诊断）
     this.txBytes = 0;         // 浏览器→串口 累计字节（诊断）
+    this.sniffers = [];       // 临时 rx 旁路（exec 用，不影响站点读取）
   }
 
   connect(timeout = 6000) {
@@ -77,6 +78,38 @@ class ProxyLink {
     } else {
       this.rxBuffer.push(u8);
     }
+    // 旁路：把同一份字节喂给临时 sniffer（exec 抓 REPL 回显），不影响站点读取。
+    if (this.sniffers.length) {
+      for (const fn of this.sniffers.slice()) { try { fn(u8); } catch {} }
+    }
+  }
+
+  /**
+   * 在板子 REPL 上跑一小段命令并抓回显：直接写串口字节，旁路嗅探 rx 直到出现结束哨兵。
+   * 站点照常收到这些字节（终端会显示），我们只是额外拷贝一份解析。
+   * @returns {Promise<string>} startMark 与 endMark 之间的文本
+   */
+  exec(cmdBytes, { startMark, endMark, timeout = 4000 } = {}) {
+    return new Promise((resolve, reject) => {
+      const dec = new TextDecoder();
+      let buf = "";
+      const sniffer = (u8) => {
+        buf += dec.decode(u8, { stream: true });
+        const s = buf.indexOf(startMark);
+        if (s < 0) { if (buf.length > 65536) buf = buf.slice(-4096); return; }
+        const e = buf.indexOf(endMark, s + startMark.length);
+        if (e >= 0) { cleanup(); resolve(buf.slice(s + startMark.length, e)); }
+      };
+      const cleanup = () => {
+        clearTimeout(to);
+        const i = this.sniffers.indexOf(sniffer);
+        if (i >= 0) this.sniffers.splice(i, 1);
+      };
+      const to = setTimeout(() => { cleanup(); reject(new Error("REPL exec 超时")); }, timeout);
+      this.sniffers.push(sniffer);
+      try { this.sendBinary(cmdBytes); }
+      catch (e) { cleanup(); reject(e); }
+    });
   }
 
   /** 发送一条控制消息并等待某类响应。 */
