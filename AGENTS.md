@@ -10,6 +10,20 @@
 按需调用工具）→ 渲染。底层仍复用「生成 → 校验 → 修复」能力——它内嵌在 `edit_blocks`
 工具里（主循环本身就是修复循环，无嵌套 LLM）。会话状态仅在内存，刷新即清空。
 
+## 适配的板子（仅两款）
+
+站点本身支持多种主控，但本项目**只适配掌控板系列**（均为 ESP32 跑 MicroPython）。板子由站点的
+`masterControl`（localStorage / Vuex state）标识，`src/kb/knowledge.mjs` 的 `boardFromMaster()` 据此解析：
+
+| 内部名 `masterControl` | 中文名 | 版本 | 芯片 |
+| --- | --- | --- | --- |
+| `mPython`（空/未设也按此默认） | 掌控板 | `v2` | ESP32 |
+| `mPython_V3` | 掌控板V3 | `v3` | ESP32-S3 |
+
+其余 `masterControl` 值一律 `supported:false`（面板提示「不支持」）。**注意区分**：站点代码里出现的
+`new1956Files` / `expandTree` / `root@TinaLinux` shell / `ls "..."` 是**另一类 Linux 主控板**（行空板
+那类，非掌控板），与本项目无关，排查掌控板问题时不要顺着那条链路走。
+
 ## 命令（使用 Bun，不要用 npm）
 
 - `bun install` —— 安装依赖
