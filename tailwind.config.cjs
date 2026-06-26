@@ -1,9 +1,11 @@
 /** tailwind.config.cjs — scans the panel source for utility classes and emits a
  *  precompiled stylesheet that gets inlined into the panel's Shadow DOM <style>.
- *  Always-dark application UI; dark palette values are used directly as base.
- *  Shadow DOM fully isolates styles, so no extra scoping/important is needed. */
+ *  Light + dark via `prefers-color-scheme` (darkMode: 'media'): light is the base,
+ *  `dark:` variants layer on top. Shadow DOM fully isolates styles, so no extra
+ *  scoping/important is needed. */
 module.exports = {
   content: ["./src/ui/**/*.{mjs,js}"],
+  darkMode: "media",
   theme: {
     extend: {
       fontFamily: {
