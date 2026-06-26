@@ -64,7 +64,20 @@ async function boot() {
   let version = "unknown";
   let serialProxy = null;
 
-  window.__m3e__ = { focus: () => panel.setHidden(false), panel, caps, session };
+  window.__m3e__ = { focus: () => { panel.setHidden(false); panel.focusInput?.(); }, panel, caps, session };
+
+  // Self-heal: some host re-renders can wipe nodes out of <body>. Our panel host
+  // carries the whole shadow tree + conversation state, so re-appending the SAME
+  // node restores everything (no rebuild). Watch only direct children of <html>/
+  // <body> — cheap, and deep xterm/Vue churn never trips a childList there.
+  (function selfHeal() {
+    const reattach = () => { if (panel.host && !panel.host.isConnected) (document.body || document.documentElement).appendChild(panel.host); };
+    let bodyMO = null;
+    const onMut = () => { reattach(); watchBody(); };
+    function watchBody() { bodyMO?.disconnect(); if (document.body) { bodyMO = new MutationObserver(onMut); bodyMO.observe(document.body, { childList: true }); } }
+    try { new MutationObserver(onMut).observe(document.documentElement, { childList: true }); watchBody(); }
+    catch (e) { log.info("面板自愈未启用", e?.message); }
+  })();
 
   function currentMaster() {
     return window.localStorage.masterControl || caps.state().masterControl || "";
@@ -136,6 +149,24 @@ async function boot() {
     panel.notice("用中文描述需求或提问，输入 /help 查看命令。");
   } catch (e) {
     panel.notice("加载知识库失败：" + e.message, "err");
+  }
+  checkBookmarkVersion();
+
+  // The bookmark string is frozen into the user's bookmark at install time, so
+  // new bootstrap features (e.g. re-click → refocus) only take effect after they
+  // re-drag it. main.min.js is stamped with the CURRENT loader version + build
+  // rev; if the bookmark baked an older LOADER_VERSION (the bootstrap template
+  // changed), nudge the user to reinstall. The commit rev is only for readable
+  // display — it does NOT gate the prompt, so ordinary commits don't trip it.
+  // __M3E_BASE__ is set only by the bookmark loader, so dev injections are exempt.
+  function checkBookmarkVersion() {
+    const base = window.__M3E_BASE__;
+    const loaderV = window.__M3E_LOADER_VERSION__;
+    if (!base || !loaderV) return;
+    log.info("m3e 版本", { 运行: window.__M3E_BUILD_REV__ || "?", 书签: window.__M3E_BOOT_REV__ || "?", loader: loaderV });
+    if (window.__M3E_BOOT_VERSION__ === loaderV) return;
+    const from = window.__M3E_BOOT_REV__ || "旧版", to = window.__M3E_BUILD_REV__ || loaderV;
+    panel.notice(`检测到书签为旧版本（书签 ${from} → 当前 ${to}），引导脚本已更新，部分新功能需重装书签后才生效。请打开 ${base}/install.html 重新拖拽安装书签。`);
   }
 
   // ---- input dispatch ----

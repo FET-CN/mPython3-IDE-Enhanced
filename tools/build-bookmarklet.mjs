@@ -13,6 +13,8 @@
 import {
   writeFileSync, readFileSync, existsSync, statSync, mkdirSync, cpSync, copyFileSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
+import { execSync } from "node:child_process";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DIST_DIR, DATA_DIR, ROOT } from "./lib/paths.mjs";
@@ -56,10 +58,41 @@ async function bundle() {
   return out;
 }
 
+/** The address-bar bootstrap, frozen into the user's bookmark at install time.
+ *  Re-clicking a bookmark for an already-open panel just refocuses it (no dead
+ *  return); otherwise it pins the data base, a loader version, and the build rev,
+ *  then injects the runtime. `version`/`rev` are baked in so the runtime can spot
+ *  a stale bookmark and show which build it came from. */
+function bootstrapSrc(base, version, rev) {
+  return `(function(){if(window.__m3e__){try{window.__m3e__.focus&&window.__m3e__.focus()}catch(e){}return}window.__M3E_BASE__=${JSON.stringify(base)};window.__M3E_BOOT_VERSION__=${JSON.stringify(version)};window.__M3E_BOOT_REV__=${JSON.stringify(rev)};var s=document.createElement('script');s.src=${JSON.stringify(base + "/main.min.js")}+'?t='+Date.now();s.onerror=function(){alert('加载 AI 助手失败，请检查托管地址: '+${JSON.stringify(base)})};document.body.appendChild(s)})();`;
+}
+
+/** Short commit hash (with a `+` suffix when the tree is dirty) for human-readable
+ *  versioning — shown in build/runtime logs and the stale-bookmark notice. Falls
+ *  back to "dev" outside a git checkout. NOTE: the rev intentionally does NOT feed
+ *  LOADER_VERSION (below), so ordinary commits don't falsely flag bookmarks. */
+function gitRev() {
+  try {
+    const rev = execSync("git rev-parse --short HEAD", { cwd: ROOT, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+    if (!rev) return "dev";
+    let dirty = "";
+    try { execSync("git diff --quiet && git diff --cached --quiet", { cwd: ROOT, stdio: "ignore" }); }
+    catch { dirty = "+"; }
+    return rev + dirty;
+  } catch { return "dev"; }
+}
+const BUILD_REV = gitRev();
+
+// LOADER_VERSION = hash of the bootstrap LOGIC ONLY (base/version/rev blanked
+// out), so it bumps exactly when the loader template itself changes — i.e. when
+// an installed bookmark goes stale and needs re-dragging. main.min.js is stamped
+// with this same value; the runtime compares the two and nudges on a mismatch.
+const LOADER_VERSION = createHash("sha256")
+  .update(bootstrapSrc("__BASE__", "__VER__", "__REV__"))
+  .digest("hex").slice(0, 10);
+
 function loader() {
-  // tiny bootstrap: guard, set base, inject script
-  const src = `(function(){if(window.__m3e__){return;}window.__M3E_BASE__=${JSON.stringify(BASE)};var s=document.createElement('script');s.src=${JSON.stringify(BASE + "/main.min.js")}+'?t='+Date.now();s.onerror=function(){alert('加载 AI 助手失败，请检查托管地址: '+${JSON.stringify(BASE)});};document.body.appendChild(s);})();`;
-  return "javascript:" + encodeURI(src);
+  return "javascript:" + encodeURI(bootstrapSrc(BASE, LOADER_VERSION, BUILD_REV));
 }
 
 function installPage(bm, base, kb) {
@@ -75,19 +108,23 @@ code{background:#f0f3f7;padding:2px 6px;border-radius:6px}pre{background:#0f1722
 <p>当前数据基址：<code>${base}</code>（共 ${kb} 个积木）。把整个 <code>dist/</code> 目录托管到该地址即可（本地可 <code>bunx serve dist -l 8080</code> 或 <code>python3 -m http.server 8080 -d dist</code>）。</p>
 <h3>首次使用</h3>
 <ol><li>点击书签，右侧出现面板。</li><li>点 ⚙ 填入 OpenAI 兼容的 Base URL / API Key / 模型，保存。</li><li>用中文描述需求 → 生成并应用。</li></ol>
+<p>面板已打开时再次点击书签 = 唤回 / 聚焦面板（不会重复加载）。日后若提示「书签为旧版本」，回到本页重新拖拽一次即可更新。</p>
 </html>`;
 }
 
 async function main() {
   assembleData();
   const out = await bundle();
+  // Stamp the runtime with the current loader version + build rev so it can detect
+  // a stale bookmark (whose baked __M3E_BOOT_VERSION__ predates LOADER_VERSION).
+  writeFileSync(out, `window.__M3E_LOADER_VERSION__=${JSON.stringify(LOADER_VERSION)};window.__M3E_BUILD_REV__=${JSON.stringify(BUILD_REV)};\n` + readFileSync(out, "utf8"));
   const size = existsSync(out) ? (statSync(out).size / 1024).toFixed(0) : "?";
   const bm = loader();
   writeFileSync(resolve(DIST_DIR, "bookmarklet.txt"), bm);
   let kb = "?";
   try { kb = JSON.parse(readFileSync(resolve(DIST_DIR, "catalog.index.json"))).length; } catch {}
   writeFileSync(resolve(DIST_DIR, "install.html"), installPage(bm, BASE, kb));
-  console.error(`[bookmarklet] main.min.js ${size}KB; base=${BASE}; → dist/{bookmarklet.txt,install.html}`);
+  console.error(`[bookmarklet] main.min.js ${size}KB; base=${BASE}; rev=${BUILD_REV}; loader=${LOADER_VERSION}; → dist/{bookmarklet.txt,install.html}`);
 }
 
 main();
