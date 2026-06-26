@@ -2,7 +2,8 @@
  * static string inlined into the panel's Shadow DOM. Preflight is off (see
  * tailwind.config.cjs); we add a minimal, shadow-scoped reset here, then a few
  * component classes on top of utilities. Light is the base; dark layers on via
- * `prefers-color-scheme` (Tailwind `dark:` variants + the rules below). */
+ * a `.dark` class toggled on the `.m3e` root (Tailwind `dark:` variants + the
+ * `.dark` rules below) so the panel follows the HOST SITE theme, not the OS. */
 
 @tailwind base;
 @tailwind components;
@@ -11,7 +12,6 @@
 @layer base {
   :host {
     all: initial;
-    color-scheme: light dark;
     /* Host is a full-viewport, click-through overlay in the LIGHT DOM. This is
        what fixes panels disappearing behind the host page: a `position:fixed`
        element INSIDE the shadow tree (with :host all:initial → inline/static)
@@ -23,11 +23,11 @@
     inset: 0;
     z-index: 2147483647;
     pointer-events: none;
-    --m3e-accent: #2563eb;
   }
-  @media (prefers-color-scheme: dark) {
-    :host { --m3e-accent: #3b82f6; }
-  }
+  /* Native widgets (textarea caret, autofill, default scrollbars) follow the
+     panel theme — toggled with the same `.dark` class as the utilities. */
+  .m3e { color-scheme: light; }
+  .m3e.dark { color-scheme: dark; }
   /* Minimal reset (replaces preflight, scoped to the shadow tree). */
   *, *::before, *::after { box-sizing: border-box; }
   * { margin: 0; }
@@ -37,40 +37,39 @@
   .m3e-scroll { scrollbar-width: thin; scrollbar-color: rgba(113,113,122,.4) transparent; }
   .m3e-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
   .m3e-scroll::-webkit-scrollbar-thumb { background: rgba(113,113,122,.4); border-radius: 999px; }
-  @media (prefers-color-scheme: dark) {
-    .m3e-scroll { scrollbar-color: rgba(255,255,255,.2) transparent; }
-    .m3e-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,.18); }
-  }
+  .dark .m3e-scroll { scrollbar-color: rgba(255,255,255,.2) transparent; }
+  .dark .m3e-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,.18); }
 }
 
 @layer components {
-  /* Streaming cursor for the in-progress assistant message. */
+  /* Streaming cursor for the in-progress assistant message. A thin, neutral
+     bar — not a bright accent block — keeps the streaming state quiet. */
   .m3e-caret::after {
-    content: "▋";
-    margin-left: 1px;
-    color: var(--m3e-accent);
-    animation: m3e-blink 1s steps(2, start) infinite;
+    content: "";
+    display: inline-block;
+    width: 2px;
+    height: 1.05em;
+    margin-left: 2px;
+    vertical-align: text-bottom;
+    background: currentColor;
+    opacity: .55;
+    animation: m3e-blink 1.1s steps(2, start) infinite;
   }
-  @keyframes m3e-blink { to { visibility: hidden; } }
+  @keyframes m3e-blink { to { opacity: 0; } }
 
-  /* Markdown-ish code blocks rendered inside assistant bubbles. Light base,
-     dark override via media query (Shadow DOM has no class-based dark toggle). */
+  /* Markdown-ish code blocks rendered inside assistant bubbles: a borderless,
+     recessed well. Light base, dark override via the `.dark` class (Shadow DOM
+     theme is class-driven, following the host site). */
   .m3e-prose pre {
-    background: #f4f4f5;
-    border: 1px solid rgba(24,24,27,.08);
+    background: rgba(24,24,27,.045);
     border-radius: 8px;
-    padding: 8px 10px;
+    padding: 9px 11px;
     overflow: auto;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 11.5px;
-    line-height: 1.5;
+    line-height: 1.55;
   }
-  @media (prefers-color-scheme: dark) {
-    .m3e-prose pre {
-      background: #08080a;
-      border-color: rgba(255,255,255,.08);
-    }
-  }
+  .dark .m3e-prose pre { background: rgba(255,255,255,.05); }
   .m3e-prose code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   .m3e-prose p + p { margin-top: .5rem; }
 }

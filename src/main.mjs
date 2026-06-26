@@ -4,7 +4,7 @@
 // streams the reply and calls tools: read_workspace / search_blocks / edit_blocks
 // / run_code / think / update_todos) → render. Conversation state is in-memory.
 
-import { detectHost } from "./host/hostBridge.mjs";
+import { detectHost, watchNight } from "./host/hostBridge.mjs";
 import { readWorkspaceIR } from "./host/read.mjs";
 import { snapshot, restore } from "./host/inject.mjs";
 import { createLock } from "./host/lock.mjs";
@@ -78,6 +78,11 @@ async function boot() {
     try { new MutationObserver(onMut).observe(document.documentElement, { childList: true }); watchBody(); }
     catch (e) { log.info("面板自愈未启用", e?.message); }
   })();
+
+  // Follow the host site's light/dark theme (Vuex state.nightSwitch), not the OS.
+  // watchNight fires cb once immediately with the current theme, then on changes.
+  try { watchNight(caps, (dark) => panel.setDark(dark)); }
+  catch (e) { log.info("主题跟随未启用", e?.message); }
 
   function currentMaster() {
     return window.localStorage.masterControl || caps.state().masterControl || "";

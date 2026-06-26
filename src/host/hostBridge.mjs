@@ -50,3 +50,24 @@ export function detectHost(win = globalThis.window, doc = globalThis.document) {
 export function isPythonMode(caps) {
   return !!(caps.state().modeSate);
 }
+
+/** True when the host site is in dark/night theme. The site stores this in the
+ *  Vuex `state.nightSwitch` flag (mutation `changeNight`), confirmed via
+ *  e2e/probe.mjs. Tolerates the flag being absent (older bundles) → light. */
+export function isNight(caps) {
+  return !!(caps.state().nightSwitch);
+}
+
+/** Subscribe to host theme changes. Calls `cb(isDark)` once immediately, then on
+ *  every change. Primary signal is the Vuex store subscription (fires on the
+ *  `changeNight` mutation); a slow poll backs it up in case the flag is mutated
+ *  outside the store. Returns an unsubscribe function. */
+export function watchNight(caps, cb) {
+  let last = isNight(caps);
+  const emit = () => { const now = isNight(caps); if (now !== last) { last = now; cb(now); } };
+  let unsub = () => {};
+  try { unsub = caps.store.subscribe(() => emit()) || (() => {}); } catch {}
+  const timer = setInterval(emit, 1500);
+  try { cb(last); } catch {}
+  return () => { try { unsub(); } catch {} clearInterval(timer); };
+}
