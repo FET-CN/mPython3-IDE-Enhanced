@@ -118,8 +118,13 @@ export function validate(program, catalog, opts = {}) {
     const stmtNames = schema.statements || [];
     for (const [name, seq] of Object.entries(node.statements || {})) {
       if (!stmtNames.includes(name)) {
-        push(`${path}.statements.${name}`, "unknown_statement",
-          `"${node.type}" 没有语句插槽 "${name}"`, suggest(name, stmtNames));
+        // 新一代事件帽子块（无插槽、可 next 顺接）被误塞进 statements.DO 是高频错误。
+        // 此时给正向指引（顺接其后）而非干巴巴的「没有插槽」，让修复循环一次到位。
+        const isNextHat = !stmtNames.length && !schema.prev && schema.next !== false;
+        const detail = isNextHat
+          ? `事件积木 "${node.type}" 没有语句插槽，事件体请直接顺接其后（锚点 at:"after"），不要放进 "${name}"`
+          : `"${node.type}" 没有语句插槽 "${name}"`;
+        push(`${path}.statements.${name}`, "unknown_statement", detail, suggest(name, stmtNames));
       }
       if (Array.isArray(seq)) {
         seq.forEach((n, i) => visit(n, `${path}.statements.${name}[${i}]`, "statement"));

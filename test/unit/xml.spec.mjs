@@ -125,5 +125,25 @@ d("IR core (requires built catalog)", () => {
       const r = validate(bad, catalog);
       expect(r.errors.some((x) => x.kind === "type_mismatch")).toBe(true);
     });
+
+    it("next 型事件帽子块误塞 DO → unknown_statement 给正向接法提示（顺接其后）", () => {
+      // mpython3_radio_recv 无 DO 插槽，事件体应顺接其后。误放进 statements.DO 时报错应导向 at:"after"。
+      const bad = [[{ type: "mpython3_radio_recv", statements: { DO: [{ type: "mpython_display_Show" }] } }]];
+      const r = validate(bad, catalog);
+      const e = r.errors.find((x) => x.kind === "unknown_statement");
+      expect(e).toBeTruthy();
+      expect(e.detail).toContain('at:"after"');
+      expect(e.detail).toContain("顺接其后");
+    });
+
+    it("DO 型积木误用未知插槽 → 仍是普通「没有语句插槽」报错（不误导向 next）", () => {
+      // controls_repeat_ext 有 DO 插槽但无 FOO；不应蹭到 next 型的正向文案。
+      const bad = [[{ type: "controls_repeat_ext", inputs: { TIMES: { type: "math_number", fields: { NUM: "1" } } }, statements: { FOO: [] } }]];
+      const r = validate(bad, catalog);
+      const e = r.errors.find((x) => x.kind === "unknown_statement");
+      expect(e).toBeTruthy();
+      expect(e.detail).not.toContain("顺接其后");
+      expect(e.suggestions).toContain("DO");
+    });
   });
 });

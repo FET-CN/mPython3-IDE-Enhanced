@@ -47,6 +47,10 @@ export function renderCard(schema) {
   }
   if (schema.statements?.length) {
     lines.push("  语句体: " + schema.statements.join(", "));
+  } else if (io === "hat" && schema.next !== false) {
+    // 新一代事件帽子块（如 mpython3_radio_recv/_button_event）无 DO 插槽，事件体靠 next
+    // 链顺接在帽子块之后。显式标出接法+锚点，避免模型误塞进 statements.DO（撞 unknown_statement）。
+    lines.push('  事件体: 顺接其后(at:"after")');
   }
   return lines.join("\n");
 }

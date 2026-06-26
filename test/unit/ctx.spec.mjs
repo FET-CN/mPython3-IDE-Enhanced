@@ -111,6 +111,21 @@ d("context engineering (requires built catalog)", () => {
       expect(card).toContain("事件积木");
       expect(card).toContain("语句体: DO");
     });
+    it("标注新一代 next 型事件块的事件体接法（顺接其后），区别于 DO 型", () => {
+      // mpython3_radio_recv: next:true / statements:[] → 顺接其后，无 DO 插槽
+      const next = renderCard(catalog.get("mpython3_radio_recv"));
+      expect(next).toContain("事件积木");
+      expect(next).toContain('事件体: 顺接其后(at:"after")');
+      expect(next).not.toContain("语句体: DO");
+      // 旧版 mpython_radio_recv 仍是 DO 插槽型
+      const doType = renderCard(catalog.get("mpython_radio_recv"));
+      expect(doType).toContain("语句体: DO");
+      expect(doType).not.toContain("顺接其后");
+      // mpython3_main 虽是 mpython3 但显式带 DO，归 DO 型（不可误判成顺接型）
+      const main = renderCard(catalog.get("mpython3_main"));
+      expect(main).toContain("语句体: DO");
+      expect(main).not.toContain("顺接其后");
+    });
   });
 
   describe("assembleMessages", () => {
