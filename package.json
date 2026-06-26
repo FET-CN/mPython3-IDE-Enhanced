@@ -27,6 +27,7 @@
     "build:catalog": "bun tools/build-catalog.mjs",
     "build:knowledge": "bun tools/build-knowledge.mjs",
     "build:css": "bun tools/build-css.mjs",
+    "build:term-font": "bun tools/build-term-font.mjs",
     "build:bookmarklet": "bun tools/build-bookmarklet.mjs",
     "build": "bun run build:catalog && bun run build:knowledge && bun run build:css && bun run build:bookmarklet",
     "dump:toolbox": "bun tools/dump-toolbox.mjs",

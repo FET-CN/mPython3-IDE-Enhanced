@@ -16,6 +16,7 @@
 - `bun run build` —— 完整重建：catalog + knowledge + **css** + bookmarklet（**需要 `vendor/`，见下文**）
 - `bun run build:bookmarklet` —— 仅从已提交的 `data/` 组装 `dist/`，无需私有数据
 - `bun run build:css` —— 预编译 Tailwind 到 `src/ui/styles.generated.mjs`（见 UI 约束）
+- `bun run build:term-font` —— **联网**（或用本地 woff2）重新生成 `src/host/termFont.mjs`（内嵌终端等宽 web 字体的纯数据模块）。生成物已提交，**不入 `build`**；缺失/加载失败时 termFix 优雅降级到裸 `monospace`。
 - `bun run dump:toolbox` —— **联网**用 Playwright 抓 online.mpython.cn 两块板的侧边栏可见积木，刷新 `data/toolbox.visible.json`（带时效快照，不入 `build`）
 - `bun run test` —— Vitest 单元/属性测试（T0 层）
 - `bun run verify` —— 提交前快速验证：`build:bookmarklet` + `test`
@@ -52,6 +53,7 @@
 - **系统提示词保持稳定**：`src/ctx/prompts.mjs` 与 `src/ctx/agent-prompt.mjs` 是会被缓存的稳定前缀，改动需谨慎、尽量保持稳定。
 - **类型校验宽松**：`src/xml/validate.mjs` 只标记模型生成的错误，不做严格类型系统。
 - **UI 样式离线编译**：宿主页跑不了 Tailwind 运行时，故 `tools/build-css.mjs` 把 Tailwind 预编译进 `src/ui/styles.generated.mjs`（**已提交**）并内联到 Shadow DOM。改了 `src/ui/**` 的类名后需 `bun run build:css` 重新生成。
+- **终端字体内嵌（宿主页，非面板）**：`src/host/termFix.mjs` 修站点 xterm 控制台「字距散开」——某些系统（Linux/Firefox）上具名等宽字体被 fontconfig 换成比例字体，测量元素按比例字宽排版 → 散开。故内嵌一个等宽 web 字体（`src/host/termFont.mjs`，JetBrains Mono 子集，**生成且提交**，由 `bun run build:term-font` 再生成；OFL 见 `src/host/JetBrainsMono-OFL.txt`），用 **FontFace API** 注册 + 最小 `!important` CSS 钉到 `.xterm` 与字符测量元素（xterm 自建、只能 CSS 压），并按**真实测量字宽**重排。这套面向**宿主页 document**，不走 Tailwind/`styles.generated.mjs`（那条是 Shadow DOM 面板专用）。
 - **图标统一用 SVG**：UI 内**不得出现 unicode emoji**，图标走 `panel.mjs` 的 `ICON` 注册表（按名解析 SVG）。
 - **积木默认偏好「积木栏当前可见」**：积木栏当前展示 `mpython3_*`（事件帽子等）+ 一批改名后的新 `mpython_*`（如 `set_RGB`→`set_rgb_list_color`、`display_circle`→`display_shape_circle`），应优先于已下架旧块。实现两层：① `kb/retriever.preferredTypes()` 始终注入 mpython3「新一代积木」卡片节，`agent-prompt.RETIRED_BLOCKS` 给出旧→新改名清单；② `data/toolbox.visible.json`（按板的侧边栏可见集，**Playwright 抓的带时效快照**）驱动 `coreTypes(index,board,visibleSet)`（核心词汇 ∩ 可见，剔除下架块）与 `retrieve(...,{visibleSet})` 加权。`toolbox.visible.json` 由 `bun run dump:toolbox` **联网**刷新，**不入 `bun run build`**；缺失时优雅降级（不过滤）。
 - **积木默认偏好 mpython3 新一代**：积木栏当前展示的是 `mpython3_*`（事件帽子「当…时」、线程、自定义事件、新版 IoT 接收器），应优先于旧的 `mpython_*` 轮询写法，仅在无新版时退回旧积木。实现：`kb/retriever.preferredTypes()` 始终把这批积木注入系统提示词的「新一代积木」稳定卡片节，`retrieve(..., preferGroups:["mpython3"])` 在检索排序中加权；旧积木**不做整体过滤**（多数无新版等价物，仍是当前积木）。
