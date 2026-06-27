@@ -200,7 +200,7 @@ function main() {
     // Hand-authored supplement is authoritative (overrides extracted schema).
     if (coreMap.has(type)) {
       const c = coreMap.get(type);
-      schema = { ...schema, ...c, core: true, zh: c.zh || schema.zh };
+      schema = { ...schema, ...c, core: c.core ?? true, zh: c.zh || schema.zh };
     }
 
     // Resolve dropdown option labels that were left null because the label was a

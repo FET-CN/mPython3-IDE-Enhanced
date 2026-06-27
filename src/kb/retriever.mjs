@@ -47,7 +47,10 @@ export function boardAllows(bd, board) {
 /**
  * @param request user's Chinese request string
  * @param index   parsed catalog.index.json (array)
- * @param opts { topN=80, board?, groups?, preferGroups?, visibleSet? }
+ * @param opts { topN=80, board?, groups?, preferGroups?, visibleSet?, visibleMode? }
+ *   visibleMode: "boost" (default) biases visible blocks; "filter" searches only
+ *   the board's real side-palette-visible blocks. Use filter for model-facing
+ *   search so hidden/catalog-only blocks don't crowd out what users can drag.
  * @returns { types, groups, scored }
  */
 export function retrieve(request, index, opts = {}) {
@@ -57,11 +60,13 @@ export function retrieve(request, index, opts = {}) {
   const restrict = opts.groups ? new Set(opts.groups) : null;
   const prefer = opts.preferGroups ? new Set(opts.preferGroups) : null;
   const visible = opts.visibleSet || null;
+  const visibleMode = opts.visibleMode || "boost";
   const board = opts.board || null;
 
   const scored = [];
   for (const e of index) {
     if (board && !boardAllows(e.bd, board)) continue;
+    if (visible && visibleMode === "filter" && !visible.has(e.type)) continue;
     if (restrict && !restrict.has(e.group)) continue;
     let s = scoreEntry(e, reqNgrams, reqLatin);
     if (s <= 0) continue;
@@ -145,25 +150,29 @@ export function coreTypes(index, board = null, visibleSet = null) {
   });
 }
 
-// Block "generations": the IDE's current side palette is the newer mpython3_*
-// family (event hats 「当…时」, threads, custom events, modern IoT receivers).
-// We surface these to the model always (preferredTypes) and boost them in
-// retrieval (retrieve's preferGroups), so it picks the current blocks the user
-// can actually drag, instead of the legacy mpython_* polling style.
+// Weak preference groups inside the real side-palette-visible set. Do NOT use
+// these to bypass visibility: online.mpython.cn exposes some mpython3 event hats,
+// but not every mpython3_* block (notably mpython3_main is hidden while mpython_main
+// is visible). The first rule is always: prefer blocks the current board's toolbox
+// actually shows.
 export const PREFERRED_GROUPS = ["mpython3"];
 
 /**
- * Always-on "new generation" vocabulary (mpython3_*), board-filtered. Excludes
- * the labplus/1956-board variants (not 掌控板). Use to render a stable, cacheable
- * "优先使用" card section in the system prompt.
+ * Always-on preferred vocabulary for the system prompt. When a visibleSet is
+ * available, this is the current board's real side-palette-visible subset, with
+ * mpython3 group blocks ordered first only if they are also visible. Null visible
+ * set falls back to the old mpython3 group list for degraded/offline builds.
  */
-export function preferredTypes(index, board = null) {
+export function preferredTypes(index, board = null, visibleSet = null) {
   return index
-    .filter(
-      (e) =>
-        PREFERRED_GROUPS.includes(e.group) &&
-        boardAllows(e.bd, board) &&
-        !/1956|labplus/.test(e.type),
-    )
+    .filter((e) => {
+      if (visibleSet) return visibleSet.has(e.type); // authoritative per-board live toolbox snapshot
+      return boardAllows(e.bd, board) && PREFERRED_GROUPS.includes(e.group) && !/1956|labplus/.test(e.type);
+    })
+    .sort((a, b) => {
+      const pa = PREFERRED_GROUPS.includes(a.group) ? 0 : 1;
+      const pb = PREFERRED_GROUPS.includes(b.group) ? 0 : 1;
+      return pa - pb;
+    })
     .map((e) => e.type);
 }

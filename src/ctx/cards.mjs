@@ -18,12 +18,13 @@ function ioKind(s) {
 function fieldStr(f, maxEnum = 10) {
   if (f.kind === "field_dropdown") {
     if (f.enum) {
-      // Show 标签(值) so the model understands opaque values (e.g. the pen-color
-      // dropdown 绘制(1)|擦除(0)); fall back to bare value when no label resolved.
+      // Show the exact value first; the model must emit the raw value, not the
+      // human label. Past bug: 标签(值) made it output "清空(fill(0))" instead of
+      // the legal value "fill(0)".
       const parts = f.enum
         .slice(0, maxEnum)
-        .map((e) => (e.label ? `${e.label}(${e.value})` : e.value));
-      return `${f.name}=${parts.join("|")}${f.enum.length > maxEnum ? "|…" : ""}`;
+        .map((e) => (e.label ? `${e.value}=${e.label}` : e.value));
+      return `${f.name}=<value之一: ${parts.join(" | ")}${f.enum.length > maxEnum ? " | …" : ""}>`;
     }
     return `${f.name}=<下拉,值动态>`;
   }

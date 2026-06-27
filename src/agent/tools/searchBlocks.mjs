@@ -9,14 +9,16 @@ import { renderCardSection } from "../../ctx/cards.mjs";
 export const searchBlocksTool = {
   name: "search_blocks",
   description:
-    "按关键词检索可用积木，返回相关积木的卡片（类型、中文名、字段/取值、输入槽）。" +
-    "当你不确定某个功能对应哪个积木、或需要某类积木的确切 type 与字段时使用。" +
+    "按关键词检索当前板型侧边栏真实可见积木，返回相关积木的卡片（类型、中文名、字段/取值、输入槽）。" +
+    "当你不确定某个功能对应哪个积木、或需要某类积木的确切 type 与字段时使用；只有维护旧工程时才设 includeHidden。" +
+    "缺省只返回用户可拖到的积木。" +
     "用空格分隔多个关键词，例如「温度 显示 屏幕」。",
   parameters: {
     type: "object",
     properties: {
       query: { type: "string", description: "中文关键词（空格分隔）" },
       limit: { type: "number", description: "返回卡片数上限，默认 30" },
+      includeHidden: { type: "boolean", description: "默认 false，仅搜索当前板型侧边栏真实可见积木；设 true 才包含隐藏/旧工程兼容积木" },
     },
     required: ["query"],
   },
@@ -30,7 +32,14 @@ export const searchBlocksTool = {
     if (!index || !catalog) return { is_error: true, content: "知识库未就绪。" };
     const limit = Math.max(1, Math.min(Number(args?.limit) || 30, 80));
     const visibleSet = ctx?.data?.visible?.forBoard(ctx.board?.board) || null;
-    const { types } = retrieve(query, index, { topN: limit, board: ctx.board?.board, preferGroups: ["mpython3"], visibleSet });
+    const includeHidden = !!args?.includeHidden;
+    const { types } = retrieve(query, index, {
+      topN: limit,
+      board: ctx.board?.board,
+      preferGroups: ["mpython3"],
+      visibleSet,
+      visibleMode: includeHidden ? "boost" : "filter",
+    });
     const schemas = [];
     for (const t of types) {
       const s = catalog.get(t);

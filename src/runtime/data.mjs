@@ -59,12 +59,17 @@ export async function loadData(win = globalThis.window) {
  */
 export function makeVisible(raw) {
   const byBoard = raw?.byBoard || {};
+  const categories = raw?.categories || {};
   const sets = new Map();
-  for (const [b, list] of Object.entries(byBoard)) sets.set(b, new Set(list));
+  for (const [b, entry] of Object.entries(byBoard)) {
+    const list = Array.isArray(entry) ? entry : entry?.types;
+    if (Array.isArray(list)) sets.set(b, new Set(list));
+  }
   return {
     has: sets.size > 0,
-    meta: raw ? { source: raw.source, capturedAt: raw.capturedAt } : null,
+    meta: raw ? { source: raw.source, capturedAt: raw.capturedAt, schema: raw.schema || 1 } : null,
     forBoard: (board) => sets.get(board) || null,
+    categoriesForBoard: (board) => categories?.[board] || byBoard?.[board]?.categories || null,
   };
 }
 
