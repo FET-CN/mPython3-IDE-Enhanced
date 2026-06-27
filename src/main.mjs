@@ -7,6 +7,8 @@
 import { detectHost, watchNight } from "./host/hostBridge.mjs";
 import { readWorkspaceIR } from "./host/read.mjs";
 import { snapshot, restore } from "./host/inject.mjs";
+import { computeEditPreview, renderWorkspaceSvg } from "./host/renderBlocks.mjs";
+import { blockTreeHtml } from "./ui/blockTree.mjs";
 import { createLock } from "./host/lock.mjs";
 import { installSerialProxy } from "./host/serialProxy.mjs";
 import { installTerminalFix } from "./host/termFix.mjs";
@@ -143,7 +145,7 @@ async function boot() {
     const system = buildAgentSystem({
       catalog: data.catalog,
       coreTypes: coreTypes(data.index, board.board, visibleSet),
-      preferredTypes: preferredTypes(data.index, board.board),
+      preferredTypes: preferredTypes(data.index, board.board, visibleSet),
       seeds: data.seeds,
       core: data.knowledge?.core,
       antipatterns: data.knowledge?.antipatterns,
@@ -332,10 +334,34 @@ async function boot() {
   // ---- confirmation gate for write/side-effecting tools ----
   async function confirmTool(tool, args) {
     const meta = TOOL_META[tool.name] || {};
+    const title = meta.confirmTitle || `执行 ${tool.name}？`;
+    if (tool.name === "edit_blocks") return confirmEdit(title, args);
     let detail = "";
-    if (tool.name === "edit_blocks") detail = `共 ${Array.isArray(args?.ops) ? args.ops.length : "?"} 个编辑算子。`;
     if (tool.name === "run_code") detail = "将把当前程序下发到已连接的设备运行。";
-    return panel.confirm({ title: meta.confirmTitle || `执行 ${tool.name}？`, detail });
+    return panel.confirm({ title, detail });
+  }
+
+  // edit_blocks gets a visual preview of the resulting blocks (computed offline,
+  // no workspace mutation). Fidelity ladder: real Blockly SVG → self-drawn block
+  // tree → text-only summary; each step degrades quietly so we never block on a
+  // preview failure. The zh change summary is shown as the detail whenever it can
+  // be computed — even when validation fails (so the card never reads as blank).
+  function confirmEdit(title, args) {
+    let detail = `共 ${Array.isArray(args?.ops) ? args.ops.length : "?"} 个编辑算子。`;
+    let preview = null;
+    try {
+      const pre = computeEditPreview(caps, args?.ops, data.catalog);
+      if (pre.summary?.length) detail = pre.summary.join("；");
+      if (pre.ok) {
+        const svg = pre.afterXml ? renderWorkspaceSvg(caps, pre.afterXml, { lock }) : null;
+        preview = svg || blockTreeHtml(pre.postIR, data.catalog);
+      } else if (pre.rawIR?.length) {
+        preview = blockTreeHtml(pre.rawIR, data.catalog);
+      }
+    } catch (e) {
+      log.debug("编辑预览生成失败", e?.message || String(e));
+    }
+    return panel.confirm({ title, detail, preview });
   }
 }
 

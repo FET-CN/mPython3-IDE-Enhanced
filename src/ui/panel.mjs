@@ -361,18 +361,27 @@ export function createPanel(opts = {}) {
     });
   }
 
-  /** Inline confirmation card → resolves 'once' | 'session' | false. */
-  function confirm({ title, detail }) {
+  /** Inline confirmation card → resolves 'once' | 'session' | false. `preview` is
+   *  optional: a DOM node or HTML string (e.g. an edit's rendered block tree)
+   *  shown in a scrollable well between the detail and the buttons; it is dropped
+   *  once the card settles into its one-line summary. */
+  function confirm({ title, detail, preview }) {
     return new Promise((resolve) => {
       const card = div("rounded-xl bg-amber-500/[.08] p-2.5 ring-1 ring-amber-500/25 dark:bg-amber-400/[.06] dark:ring-amber-400/20");
       card.innerHTML =
         `<div class="flex items-start gap-1.5 text-[12.5px] font-medium text-amber-700 dark:text-amber-300"><span class="text-amber-500 dark:text-amber-400">${ICON.alert}</span><span class="flex-1">${esc(title)}</span></div>` +
         (detail ? `<div class="mt-1 pl-[22px] text-[12px] text-zinc-600 dark:text-zinc-300">${esc(detail)}</div>` : "") +
+        (preview ? `<div data-preview class="m3e-scroll mt-2 max-h-72 overflow-auto rounded-lg bg-white/60 p-2 ring-1 ring-zinc-950/[.06] dark:bg-black/20 dark:ring-white/[.08]"></div>` : "") +
         `<div class="mt-2.5 flex gap-2">
           <button type="button" data-c="once" class="rounded-lg bg-zinc-900 px-2.5 py-1 text-[12px] font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white">允许一次</button>
           <button type="button" data-c="session" class="rounded-lg bg-zinc-950/[.05] px-2.5 py-1 text-[12px] text-zinc-700 hover:bg-zinc-950/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:bg-white/10">本会话允许</button>
           <button type="button" data-c="no" class="ml-auto rounded-lg px-2.5 py-1 text-[12px] text-zinc-500 hover:bg-zinc-950/[.05] hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-white/5 dark:hover:text-zinc-200">拒绝</button>
         </div>`;
+      if (preview) {
+        const slot = card.querySelector("[data-preview]");
+        if (typeof preview === "string") slot.innerHTML = preview;
+        else if (preview.nodeType) slot.appendChild(preview);
+      }
       append(card);
       card.addEventListener("click", (e) => {
         const c = e.target.closest?.("[data-c]")?.getAttribute("data-c");

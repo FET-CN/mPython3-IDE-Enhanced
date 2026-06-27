@@ -10,6 +10,8 @@ export function createLock(caps, opts = {}) {
   const win = caps.win;
   let state = "idle"; // idle | locked
   let scrim = null;
+  let tagEl = null;
+  let frozen = false;
   let ro = null;
   let timer = null;
   let keyHandler = null;
@@ -43,6 +45,7 @@ export function createLock(caps, opts = {}) {
     });
     const tag = doc.createElement("div");
     tag.textContent = label;
+    tagEl = tag;
     Object.assign(tag.style, {
       marginTop: "12px",
       padding: "6px 14px",
@@ -75,9 +78,32 @@ export function createLock(caps, opts = {}) {
     timer = win.setTimeout(() => unlock(), opts.timeoutMs || 120000);
   }
 
+  // Temporarily make the (already-present) scrim fully opaque so the workspace
+  // behind it can be mutated invisibly — used by the edit preview, which injects
+  // the post-edit XML to screenshot the real Blockly SVG, then restores it. The
+  // scrim swallows the flicker; without it the user would see the workspace flash
+  // to the edited state and back. No-op if the lock isn't currently held.
+  function freeze() {
+    if (state !== "locked" || !scrim || frozen) return false;
+    frozen = true;
+    scrim.style.background = win.getComputedStyle?.(doc.body)?.backgroundColor || "#1b2330";
+    scrim.style.backdropFilter = "blur(6px)";
+    if (tagEl) tagEl.style.visibility = "hidden";
+    return true;
+  }
+  function unfreeze() {
+    if (!scrim || !frozen) { frozen = false; return; }
+    frozen = false;
+    scrim.style.background = "rgba(20,28,40,0.35)";
+    scrim.style.backdropFilter = "blur(0.5px)";
+    if (tagEl) tagEl.style.visibility = "";
+  }
+
   function unlock() {
     if (state === "idle") return;
     state = "idle";
+    frozen = false;
+    tagEl = null;
     if (timer) { win.clearTimeout(timer); timer = null; }
     if (ro) { ro.disconnect(); ro = null; }
     win.removeEventListener("resize", place);
@@ -86,5 +112,5 @@ export function createLock(caps, opts = {}) {
     scrim = null;
   }
 
-  return { lock, unlock, get state() { return state; } };
+  return { lock, unlock, freeze, unfreeze, get state() { return state; }, get isLocked() { return state === "locked"; } };
 }
