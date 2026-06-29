@@ -126,6 +126,27 @@ d("IR core (requires built catalog)", () => {
       expect(r.errors.some((x) => x.kind === "type_mismatch")).toBe(true);
     });
 
+    it("accepts dynamic ADDn inputs on mutator value blocks", () => {
+      const prog = [[{
+        type: "text_print",
+        inputs: {
+          TEXT: {
+            type: "text_join",
+            inputs: {
+              ADD0: { type: "text", fields: { TEXT: "a" } },
+              ADD1: { type: "text", fields: { TEXT: "b" } },
+              ADD2: { type: "text", fields: { TEXT: "c" } },
+              ADD3: { type: "text", fields: { TEXT: "d" } },
+            },
+          },
+        },
+      }]];
+      const r = validate(prog, catalog);
+      expect(r.ok).toBe(true);
+      const xml = compile(prog, { catalog });
+      expect(xml).toContain('<mutation items="4">');
+    });
+
     it("next 型事件帽子块误塞 DO → unknown_statement 给正向接法提示（顺接其后）", () => {
       // mpython3_radio_recv 无 DO 插槽，事件体应顺接其后。误放进 statements.DO 时报错应导向 at:"after"。
       const bad = [[{ type: "mpython3_radio_recv", statements: { DO: [{ type: "mpython_display_Show" }] } }]];

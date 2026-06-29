@@ -37,6 +37,20 @@ function suggest(term, pool, n = 3) {
 
 const isValueBlock = (s) => s && s.output != null;
 const isStatementBlock = (s) => s && (s.prev || s.next);
+const isDynamicAddMutator = (s) => s && (s.mutator === "text_join" || s.mutator === "lists_create_with");
+const isDynamicAddName = (name) => /^ADD\d+$/.test(String(name));
+
+function valueSpec(schema, name) {
+  const direct = (schema.values || []).find((v) => v.name === name);
+  if (direct) return direct;
+  // text_join / lists_create_with grow ADD0, ADD1, ... via Blockly mutation.
+  // The catalog stores only the default visible slots, while compile.mjs already
+  // emits <mutation items="n"> for arbitrary consecutive ADDn inputs.
+  if (isDynamicAddMutator(schema) && isDynamicAddName(name)) {
+    return (schema.values || []).find((v) => v.name === "ADD0") || { name, check: "ANY" };
+  }
+  return null;
+}
 
 /**
  * @param program IR program (Stack[] or single Stack)
@@ -97,7 +111,7 @@ export function validate(program, catalog, opts = {}) {
     // value inputs
     const valueNames = (schema.values || []).map((v) => v.name);
     for (const [name, child] of Object.entries(node.inputs || {})) {
-      const spec = (schema.values || []).find((v) => v.name === name);
+      const spec = valueSpec(schema, name);
       if (!spec) {
         push(`${path}.inputs.${name}`, "unknown_input",
           `"${node.type}" 没有值插槽 "${name}"`, suggest(name, valueNames));

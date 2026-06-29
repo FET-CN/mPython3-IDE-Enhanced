@@ -1,9 +1,10 @@
 // src/agent/tools/editBlocks.mjs — The core write tool. The model emits an
 // edit-op plan as the tool argument; we expand expression strings, apply the ops
 // to the current id-annotated workspace, and validate. On failure we return the
-// precise errors as a tool_result so the SAME agent self-corrects and recalls —
-// the main loop IS the repair loop (no nested LLM). On success we surgically
-// patch the pre-edit workspace XML (preserving untouched blocks) and inject.
+// precise errors back to the SAME agent before user confirmation, so it can
+// self-correct and recall — the main loop IS the repair loop (no nested LLM).
+// On success we surgically patch the pre-edit workspace XML (preserving untouched
+// blocks) and inject.
 
 import { expandOps } from "../../ir/expr.mjs";
 import { annotateIds, applyOps } from "../../host/ops.mjs";
@@ -21,11 +22,11 @@ export function planEdit(currentWithIds, ops, catalog) {
   if (!Array.isArray(ops)) return { ok: false, feedback: "ops 必须是一个数组。" };
   const expanded = expandOps(ops);
   if (expanded.errors.length) {
-    return { ok: false, feedback: renderRepairFeedback({ errors: expanded.errors }) };
+    return { ok: false, feedback: renderRepairFeedback({ errors: expanded.errors }, { mode: "tool" }) };
   }
   const applied = applyOps(currentWithIds, expanded.ops, catalog);
   if (!applied.ok) {
-    return { ok: false, feedback: renderRepairFeedback({ errors: applied.errors }) };
+    return { ok: false, feedback: renderRepairFeedback({ errors: applied.errors }, { mode: "tool" }) };
   }
   return { ok: true, ops: expanded.ops, result: applied.result };
 }
@@ -52,6 +53,14 @@ export const editBlocksTool = {
   },
   isReadOnly: false,
   needsConfirm: true,
+  preflight(args, ctx) {
+    const caps = ctx?.caps;
+    const catalog = ctx?.data?.catalog;
+    if (!caps || !catalog) return { ok: false, content: "无法访问宿主工作区或知识库。" };
+    const current = annotateIds(readWorkspaceIR(caps) || []);
+    const plan = planEdit(current, args?.ops, catalog);
+    return plan.ok ? { ok: true } : { ok: false, content: plan.feedback };
+  },
   async run(args, ctx) {
     const caps = ctx?.caps;
     const catalog = ctx?.data?.catalog;

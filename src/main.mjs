@@ -291,6 +291,10 @@ async function boot() {
             if (!cur) cur = panel.beginAssistant();
             cur.delta(ev.text);
             break;
+          case "assistant_discard":
+            cur?.el?.remove?.();
+            cur = null;
+            break;
           case "assistant_done":
             closeBubble(ev.tool_calls?.length > 0);
             break;
@@ -300,6 +304,11 @@ async function boot() {
           case "todos":
             panel.setTodos(ev.todos);
             break;
+          case "tool_repair": {
+            const meta = TOOL_META[ev.name] || { icon: "help", label: ev.name };
+            panel.toolCard({ icon: meta.icon, title: "正在修正积木方案", body: ev.detail || "", expanded: false });
+            break;
+          }
           case "tool_start": {
             if (ev.name === "think" || ev.name === "update_todos" || ev.name === "ask_user") break; // these render their own UI
             const meta = TOOL_META[ev.name] || { icon: "·", label: ev.name };

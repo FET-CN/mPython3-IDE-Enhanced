@@ -84,9 +84,15 @@ export function assembleMessages(o) {
   ];
 }
 
-/** Format a ValidationReport as concise repair feedback for the LLM (L7). */
-export function renderRepairFeedback(report) {
-  const lines = ["上一次的编辑算子有以下问题，请修正后重新输出完整的 `{ \"ops\": [...] }`："];
+/** Format a ValidationReport as concise repair feedback for the LLM (L7).
+ *  `mode:"tool"` is for the agent loop: repair by calling edit_blocks again.
+ *  The default keeps the legacy non-tool repair pipeline's JSON-code-block flow. */
+export function renderRepairFeedback(report, o = {}) {
+  const mode = o.mode || "json";
+  const head = mode === "tool"
+    ? "上一次 edit_blocks 工具调用未执行：编辑算子有以下问题。请修正后重新调用 edit_blocks，并把完整 ops 放在工具参数里，不要写成聊天正文 JSON："
+    : "上一次的编辑算子有以下问题，请修正后重新输出完整的 `{ \"ops\": [...] }`：";
+  const lines = [head];
   for (const e of report.errors.slice(0, 20)) {
     let line = `- [${e.kind}] ${e.path}: ${e.detail}`;
     if (e.suggestions?.length) line += `（可选: ${e.suggestions.slice(0, 6).join(", ")}）`;

@@ -243,7 +243,7 @@ export function createPanel(opts = {}) {
    *  whole header is a hover-highlighted row; the log well below expands while
    *  running and auto-collapses once `setTone` marks it done (ok/err). The header
    *  stays clickable to re-expand. Tone tints only the leading icon. */
-  function toolCard({ icon = "help", title, body = "", tone = "" }) {
+  function toolCard({ icon = "help", title, body = "", tone = "", expanded: initialExpanded = true }) {
     const card = div("rounded-lg");
     card.innerHTML =
       `<button type="button" data-head class="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] font-medium text-zinc-600 hover:bg-zinc-950/[.04] dark:text-zinc-300 dark:hover:bg-white/[.05]">` +
@@ -258,7 +258,7 @@ export function createPanel(opts = {}) {
     const chev = card.querySelector("[data-chev]");
     const iconEl = card.querySelector("[data-ic]");
     const wrapBody = card.querySelector("[data-wrapbody]");
-    let expanded = true;
+    let expanded = !!initialExpanded;
     let hasBody = !!body;
     const sync = () => {
       const show = expanded && hasBody;

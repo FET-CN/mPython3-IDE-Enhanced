@@ -35,6 +35,14 @@ function fieldStr(f, maxEnum = 10) {
   return `${f.name}=<值>`;
 }
 
+function valuesStr(schema) {
+  if (schema.mutator === "text_join" || schema.mutator === "lists_create_with") {
+    const base = (schema.values || []).find((v) => v.name === "ADD0");
+    return `ADD0, ADD1, ... ADDn:${base?.check || "ANY"}（连续编号，可变数量）`;
+  }
+  return (schema.values || []).map((v) => `${v.name}:${v.check}`).join(", ");
+}
+
 /** Render one schema as a 1–3 line card. */
 export function renderCard(schema) {
   const io = ioKind(schema);
@@ -44,7 +52,7 @@ export function renderCard(schema) {
     lines.push("  字段: " + schema.fields.map((f) => fieldStr(f)).join(", "));
   }
   if (schema.values?.length) {
-    lines.push("  值插槽: " + schema.values.map((v) => `${v.name}:${v.check}`).join(", "));
+    lines.push("  值插槽: " + valuesStr(schema));
   }
   if (schema.statements?.length) {
     lines.push("  语句体: " + schema.statements.join(", "));

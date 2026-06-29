@@ -90,6 +90,40 @@ describe("runAgentTurn", () => {
     expect(messages.find((m) => m.role === "tool").content).toMatch(/拒绝/);
   });
 
+  it("repairs preflight failures internally before confirmation or tool execution", async () => {
+    let confirmed = 0, ran = 0, preflighted = 0;
+    const writeTool = {
+      name: "w", description: "", parameters: { type: "object", properties: {} },
+      isReadOnly: false, needsConfirm: true,
+      preflight: async () => {
+        preflighted++;
+        return preflighted === 1
+          ? { ok: false, content: "上一次 w 工具调用未执行：请修正后重新调用 w。" }
+          : { ok: true };
+      },
+      run: async () => { ran++; return { content: "应用了" }; },
+    };
+    const client = scriptClient([
+      { tool_calls: [callOf("w", { bad: true }, "bad")] },
+      { tool_calls: [callOf("w", { ok: true }, "good")] },
+      { content: "完成" },
+    ]);
+    const messages = [{ role: "user", content: "x" }];
+    const events = [];
+    const ctx = { session: { approvals: new Set() }, confirm: async () => { confirmed++; return "once"; } };
+    const r = await runAgentTurn({ messages, tools: [writeTool], client, ctx, onEvent: (e) => events.push(e.type) });
+
+    expect(r.final).toBe("完成");
+    expect(preflighted).toBe(2);
+    expect(confirmed).toBe(1);
+    expect(ran).toBe(1);
+    expect(events).toContain("assistant_discard");
+    expect(events).toContain("tool_repair");
+    expect(messages.some((m) => m.role === "assistant" && m.tool_calls?.some((c) => c.id === "bad"))).toBe(false);
+    expect(messages.filter((m) => m.role === "tool")).toHaveLength(1);
+    expect(messages.find((m) => m.role === "user" && /重新调用 w/.test(m.content))).toBeTruthy();
+  });
+
   it("stops cleanly when the signal is already aborted", async () => {
     const ac = new AbortController();
     ac.abort();

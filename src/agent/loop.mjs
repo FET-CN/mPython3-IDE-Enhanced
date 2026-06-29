@@ -42,6 +42,18 @@ export async function runAgentTurn(o) {
       onDelta: (text) => emit({ type: "assistant_delta", text }),
     });
 
+    const repair = await preflightToolCalls(res.tool_calls || [], byName, runCtx);
+    if (repair) {
+      emit({ type: "assistant_discard" });
+      emit({ type: "tool_repair", name: repair.name, detail: repair.content });
+      log.group(`第 ${step + 1} 步 · 工具预校验未通过（内部修复）`, () => {
+        log.debug("工具", repair.name);
+        log.debug("反馈", clip(repair.content));
+      });
+      messages.push({ role: "user", content: repair.content });
+      continue;
+    }
+
     const assistantMsg = { role: "assistant", content: res.content || "" };
     if (res.tool_calls?.length) assistantMsg.tool_calls = res.tool_calls;
     messages.push(assistantMsg);
@@ -74,6 +86,33 @@ export async function runAgentTurn(o) {
     for (const r of results) messages.push(r);
   }
   return { messages, final: null, steps: MAX_STEPS, stopped: "max_steps" };
+}
+
+/** Run model-repairable, side-effect-free checks before confirmation/execution.
+ *  A failure is intentionally NOT encoded as assistant tool_calls + tool output:
+ *  it is an internal repair turn, so we append only a compact user-facing-to-LLM
+ *  hint and ask the model again. */
+async function preflightToolCalls(calls, byName, ctx) {
+  for (const call of calls || []) {
+    const name = call.function?.name;
+    const tool = byName.get(name);
+    if (!tool?.preflight) continue;
+
+    let args = {};
+    try {
+      const raw = call.function?.arguments;
+      args = raw ? JSON.parse(raw) : {};
+    } catch (e) {
+      return {
+        name,
+        content: `上一次 ${name} 工具调用未执行：参数不是合法 JSON（${e.message}）。请修正后重新调用 ${name}，不要把 JSON 写进聊天正文。`,
+      };
+    }
+
+    const out = await tool.preflight(args, ctx);
+    if (out && out.ok === false) return { name, content: String(out.content || "工具预校验失败，请修正后重试。") };
+  }
+  return null;
 }
 
 /** Execute one tool_call → an OpenAI `tool` message (always, even on error). */

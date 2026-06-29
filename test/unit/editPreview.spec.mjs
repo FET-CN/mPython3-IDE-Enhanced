@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { DOMParser, parseHTML } from "linkedom";
 import { blockTreeHtml } from "../../src/ui/blockTree.mjs";
 import { computeEditPreview, renderWorkspaceSvg } from "../../src/host/renderBlocks.mjs";
+import { compile } from "../../src/xml/compile.mjs";
 import { catalogBuilt, loadCatalogMap } from "../helpers/catalog.mjs";
 
 const d = catalogBuilt ? describe : describe.skip;
@@ -131,6 +132,37 @@ d("edit preview (blockTree + computeEditPreview)", () => {
       expect(html).toContain("OLED 显示");
     });
 
+    it("accepts a 4-part text_join edit before showing the confirmation preview", () => {
+      const base = [[
+        { type: "mpython_display_Show" },
+        { type: "mpython_display_Show" },
+        { type: "mpython_display_Show" },
+        { type: "mpython_display_Show" },
+        { type: "mpython_display_Show" },
+        { type: "mpython_display_Show" },
+        { type: "mpython_display_Show" },
+      ]];
+      const caps = fakeCaps(compile(base, { catalog }));
+      const ops = [{ op: "insert", anchor: { at: "after", id: "b7" }, blocks: [
+        { type: "mpython_display_DispChar", fields: { TEXTMODE: "1", AUTORETURN: "False" }, inputs: {
+          x: { type: "math_number", fields: { NUM: "0" } },
+          y: { type: "math_number", fields: { NUM: "16" } },
+          message: { type: "text_join", inputs: {
+            ADD0: { type: "mpython_time_localtime", fields: { time_localtime: "[1]" } },
+            ADD1: { type: "text", fields: { TEXT: "月" } },
+            ADD2: { type: "mpython_time_localtime", fields: { time_localtime: "[2]" } },
+            ADD3: { type: "text", fields: { TEXT: "日" } },
+          } },
+        } },
+        { type: "mpython_display_Show" },
+      ] }];
+      const pre = computeEditPreview(caps, ops, catalog);
+      expect(pre.ok).toBe(true);
+      expect(pre.feedback).toBeUndefined();
+      expect(pre.afterXml).toMatch(/<mutation items="4"\s*\/?>/);
+      expect(pre.postIR.flat().at(-2).type).toBe("mpython_display_DispChar");
+    });
+
     it("blockTree output parses as HTML (well-formed for shadow DOM)", () => {
       const ir = [[{ type: "controls_repeat_ext", inputs: { TIMES: { type: "math_number", fields: { NUM: "42" } } }, statements: { DO: [] } }]];
       const html = blockTreeHtml(ir, catalog);
@@ -202,4 +234,3 @@ d("edit preview (blockTree + computeEditPreview)", () => {
     });
   });
 });
-

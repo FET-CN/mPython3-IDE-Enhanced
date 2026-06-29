@@ -106,6 +106,11 @@ d("context engineering (requires built catalog)", () => {
       expect(card).toContain("OP=");
       expect(card).toContain("EQ");
     });
+    it("renders mutator value slots as dynamic ADDn guidance", () => {
+      const card = renderCard(catalog.get("text_join"));
+      expect(card).toContain("ADD0, ADD1, ... ADDn");
+      expect(card).toContain("可变数量");
+    });
     it("renders an event block with statement body", () => {
       const card = renderCard(catalog.get("mpython_Interrupt_AB"));
       expect(card).toContain("事件积木");
@@ -161,6 +166,16 @@ d("context engineering (requires built catalog)", () => {
       });
       expect(fb).toContain("unknown_type");
       expect(fb).toContain("math_number");
+    });
+
+    it("uses tool-call guidance for agent repair feedback", () => {
+      const fb = renderRepairFeedback({
+        ok: false,
+        errors: [{ path: "ops[0]", kind: "bad_op", detail: "错误算子" }],
+      }, { mode: "tool" });
+      expect(fb).toContain("重新调用 edit_blocks");
+      expect(fb).toContain("工具参数");
+      expect(fb).not.toContain("重新输出完整");
     });
   });
 });
