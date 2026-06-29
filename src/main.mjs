@@ -22,7 +22,7 @@ import { buildAgentSystem } from "./ctx/agent-prompt.mjs";
 import { createHistory } from "./agent/history.mjs";
 import { runAgentTurn } from "./agent/loop.mjs";
 import { ALL_TOOLS } from "./agent/tools/index.mjs";
-import { parseSlash, commandPrompt, COMMANDS, helpText } from "./agent/commands.mjs";
+import { parseSlash, commandPrompt, COMMANDS, helpText, parseRewindArgs } from "./agent/commands.mjs";
 import { log } from "./runtime/log.mjs";
 
 // Human-facing titles for tool cards / confirmation prompts. `icon` is a key into
@@ -65,6 +65,9 @@ async function boot() {
   let board = boardFromMaster(currentMaster());
   let version = "unknown";
   let serialProxy = null;
+  let isBusy = false;
+  let rewindMode = false;
+  const turnRecords = [];
 
   window.__m3e__ = { focus: () => { panel.setHidden(false); panel.focusInput?.(); }, panel, caps, session };
 
@@ -180,29 +183,35 @@ async function boot() {
 
   function handleInput(text) {
     if (!text) return;
+    if (isBusy || currentAbort) { panel.notice("当前回合仍在运行，请先停止或等待完成。", "err"); return; }
+    if (rewindMode) { panel.notice("请先完成或取消回退模式。", "err"); return; }
     const slash = parseSlash(text);
     if (slash?.unknown) { panel.notice(`未知命令 /${slash.name}，输入 /help 查看`, "err"); return; }
     if (slash) {
-      if (COMMANDS[slash.name].kind === "local") return runLocalCommand(slash.name);
-      panel.addUser("/" + slash.name + (slash.arg ? " " + slash.arg : ""));
-      return runTurn(commandPrompt(slash.name, slash.arg));
+      if (COMMANDS[slash.name].kind === "local") return runLocalCommand(slash.name, slash.arg);
+      return runTurn({ displayText: "/" + slash.name + (slash.arg ? " " + slash.arg : ""), contentText: commandPrompt(slash.name, slash.arg) });
     }
-    panel.addUser(text);
-    runTurn(text);
+    runTurn({ displayText: text, contentText: text });
   }
 
-  async function runLocalCommand(name) {
+  async function runLocalCommand(name, arg = "") {
     switch (name) {
       case "clear":
-        history?.clear(); panel.clearFeed(); session.todos = [];
+        panel.exitRewindMode?.(); rewindMode = false;
+        history?.clear(); turnRecords.length = 0; panel.clearFeed(); session.todos = []; panel.setTodos([]);
         panel.notice("已清空对话（工作区保留）", "ok");
         break;
       case "compact":
         if (!ensureReady()) break;
-        panel.setBusy(true);
-        try { await history.compact(client); panel.notice("已把对话压缩为摘要", "ok"); }
+        if (isBusy || currentAbort) { panel.notice("当前回合仍在运行，请稍后再压缩。", "err"); break; }
+        panel.exitRewindMode?.(); rewindMode = false;
+        setBusy(true);
+        try { await history.compact(client); turnRecords.length = 0; panel.notice("已把对话压缩为摘要", "ok"); }
         catch (e) { panel.notice("压缩失败：" + e.message, "err"); }
-        finally { panel.setBusy(false); }
+        finally { setBusy(false); }
+        break;
+      case "rewind":
+        await runRewindCommand(arg);
         break;
       case "undo":
         if (session.lastSnapshot) {
@@ -228,19 +237,112 @@ async function boot() {
     return true;
   }
 
+  function setBusy(b) {
+    isBusy = !!b;
+    panel.setBusy(!!b);
+  }
+
+  const cloneTodos = (todos) => (Array.isArray(todos) ? todos.map((t) => ({ ...t })) : []);
+  const clipText = (s, n = 80) => {
+    const t = String(s || "").replace(/\s+/g, " ").trim();
+    return t.length > n ? t.slice(0, n) + "…" : t;
+  };
+
+  function buildRewindChoices() {
+    const closedIds = new Set(history?.closedTurns?.().map((t) => t.id) || []);
+    const closed = turnRecords.filter((r) => closedIds.has(r.id));
+    return closed.map((r, i) => ({ ...r, count: closed.length - i, previewText: clipText(r.displayText) }));
+  }
+
+  async function runRewindCommand(arg = "") {
+    if (!ensureReady()) return;
+    if (isBusy || currentAbort) { panel.notice("当前回合仍在运行，请先停止或等待完成。", "err"); return; }
+    const parsed = parseRewindArgs(arg);
+    if (parsed.mode === "error") { panel.notice(parsed.message, "err"); return; }
+    if (parsed.mode === "interactive") return enterInteractiveRewind();
+    return performRewind({ count: parsed.count, chatOnly: parsed.chatOnly });
+  }
+
+  async function enterInteractiveRewind() {
+    const turns = buildRewindChoices();
+    if (!turns.length) { panel.notice("无可回退的对话", "err"); return; }
+    rewindMode = true;
+    const picked = await panel.enterRewindMode({ turns });
+    if (!picked) { rewindMode = false; panel.exitRewindMode?.(); return; }
+    const affected = turns.filter((t) => t.count <= picked.count);
+    panel.exitRewindMode?.();
+    const mode = await panel.confirmRewind({ turn: picked, count: picked.count, hasRunCode: affected.some((t) => t.hadRunCode), hasWorkspaceSnapshot: !!picked.workspaceSnapOk });
+    if (!mode) { rewindMode = false; panel.exitRewindMode?.(); return; }
+    rewindMode = false;
+    panel.exitRewindMode?.();
+    await performRewind({ count: picked.count, chatOnly: mode === "chat" });
+  }
+
+  async function performRewind({ count = 1, chatOnly = false } = {}) {
+    const available = history?.rewindableCount?.() || 0;
+    if (!available) { panel.notice("无可回退的对话", "err"); return; }
+    if (!Number.isSafeInteger(count) || count <= 0) { panel.notice("回退轮数必须是正整数", "err"); return; }
+    if (count > available) { panel.notice(`只能回退最近 ${available} 轮对话`, "err"); return; }
+    const closedIds = new Set(history.closedTurns().map((t) => t.id));
+    const closedRecords = turnRecords.filter((r) => closedIds.has(r.id));
+    const target = closedRecords[closedRecords.length - count];
+    const removed = closedRecords.slice(closedRecords.length - count);
+    if (!target) { panel.notice("无法找到对应的回退点", "err"); return; }
+
+    panel.exitRewindMode?.(); rewindMode = false;
+    const hist = history.rewind(count);
+    if (!hist.ok) { panel.notice("回退失败：历史边界不可用", "err"); return; }
+    const keep = new Set(history.closedTurns().map((t) => t.id));
+    for (let i = turnRecords.length - 1; i >= 0; i--) if (!keep.has(turnRecords[i].id)) turnRecords.splice(i, 1);
+
+    const uiOk = panel.restoreFeedMark(target.feedMark);
+    session.todos = cloneTodos(target.todosBefore);
+    panel.setTodos(session.todos);
+
+    let wsOk = true;
+    if (!chatOnly) {
+      if (target.workspaceSnapOk && target.workspaceSnap) {
+        try { restore(caps, target.workspaceSnap); session.lastSnapshot = null; }
+        catch (e) { wsOk = false; panel.notice("对话已回退，但工作区恢复失败：" + (e?.message || e), "err"); }
+      } else {
+        wsOk = false;
+        panel.notice("对话已回退，但该回合缺少工作区快照，未恢复工作区。", "err");
+      }
+    }
+    const side = removed.some((r) => r.hadRunCode) ? "；设备运行副作用无法撤销" : "";
+    const ui = uiOk ? "" : "；界面记录无法精确裁剪，必要时可 /clear";
+    if (wsOk || chatOnly) panel.notice(`已回退 ${count} 轮对话${chatOnly ? "（工作区保留）" : "（工作区已恢复）"}${side}${ui}`, "ok");
+  }
+
   // ---- one user turn through the agent loop ----
 
-  async function runTurn(content) {
+  async function runTurn(input) {
+    const displayText = typeof input === "string" ? input : input?.displayText;
+    const contentText = typeof input === "string" ? input : input?.contentText;
     if (!ensureReady()) return;
+    if (isBusy || currentAbort) { panel.notice("当前回合仍在运行，请先停止或等待完成。", "err"); return; }
+    let feedMark = null, workspaceSnap = null, workspaceSnapOk = false, historyTurn = null, record = null;
+    try { feedMark = panel.feedMark(); } catch {}
+    try { workspaceSnap = snapshot(caps); workspaceSnapOk = true; }
+    catch (e) { panel.notice("工作区快照失败，本轮之后只能仅回退聊天：" + (e?.message || e), "err"); }
+    const todosBefore = cloneTodos(session.todos);
+    const lastSnapshotBefore = session.lastSnapshot;
     const n = countBlocks(readWorkspaceIR(caps));
     const hint = n ? `（当前工作区约 ${n} 个积木；编辑前请调用 read_workspace 获取精确结构与 id）` : "（当前工作区为空）";
-    history.addUser(`${content}\n${hint}`);
-    log.info("用户输入", { 需求: content, 工作区积木数: n });
+    historyTurn = history.beginTurn(`${contentText}\n${hint}`);
+    const userNode = panel.addUser(displayText, { turnId: historyTurn.id });
+    record = {
+      id: historyTurn.id, historyTurn, feedMark, userNode, workspaceSnap, workspaceSnapOk,
+      todosBefore, lastSnapshotBefore, displayText, previewText: clipText(displayText),
+      hadRunCode: false, hadWorkspaceEdit: false, status: "open",
+    };
+    turnRecords.push(record);
+    log.info("用户输入", { 需求: displayText, 工作区积木数: n });
 
     currentAbort = new AbortController();
-    panel.setBusy(true);
+    setBusy(true);
     lock.lock();
-    const ui = createTurnUI();
+    const ui = createTurnUI(record);
     try {
       const r = await runAgentTurn({
         messages: history.messages(),
@@ -251,19 +353,22 @@ async function boot() {
         signal: currentAbort.signal,
       });
       ui.finish();
+      record.status = r.stopped === "done" ? "closed" : r.stopped;
       if (r.stopped === "max_steps") panel.notice("已达到单轮最多步骤数，已停止。可继续追问。", "err");
     } catch (e) {
+      record.status = currentAbort.signal.aborted ? "aborted" : "error";
       if (currentAbort.signal.aborted) panel.notice("已停止。");
       else panel.notice("出错：" + (e?.message || String(e)), "err");
     } finally {
+      history.closeTurn(historyTurn, { status: record.status });
       lock.unlock();
-      panel.setBusy(false);
+      setBusy(false);
       currentAbort = null;
     }
   }
 
   /** Translate agent-loop events into panel rendering. */
-  function createTurnUI() {
+  function createTurnUI(record = null) {
     let cur = null;            // current streaming assistant bubble
     const pending = new Map(); // name → queue of open tool cards
     let runCard = null;        // live run_code output card
@@ -310,6 +415,7 @@ async function boot() {
             break;
           }
           case "tool_start": {
+            if (ev.name === "run_code" && record) record.hadRunCode = true;
             if (ev.name === "think" || ev.name === "update_todos" || ev.name === "ask_user") break; // these render their own UI
             const meta = TOOL_META[ev.name] || { icon: "·", label: ev.name };
             const sub = ev.name === "search_blocks" && ev.args?.query ? "：" + ev.args.query : "";
@@ -332,7 +438,7 @@ async function boot() {
             break;
           }
           case "applied":
-            // editBlocks already stored the pre-edit snapshot on session for /undo.
+            if (record) record.hadWorkspaceEdit = true;
             break;
         }
       },

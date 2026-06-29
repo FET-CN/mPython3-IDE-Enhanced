@@ -198,10 +198,27 @@ export function createPanel(opts = {}) {
   const append = (el) => { dropHint?.(); feed.appendChild(el); scrollToEnd(); return el; };
   const div = (cls, html) => { const d = doc.createElement("div"); if (cls) d.className = cls; if (html != null) d.innerHTML = html; return d; };
 
+  function feedMark() {
+    dropHint?.();
+    const marker = doc.createComment("m3e-feed-mark");
+    feed.appendChild(marker);
+    return marker;
+  }
+
+  function restoreFeedMark(marker) {
+    if (!marker || marker.parentNode !== feed) return false;
+    while (marker.nextSibling) marker.nextSibling.remove();
+    marker.remove();
+    if (!feed.childNodes.length) feed.appendChild(emptyHint);
+    scrollToEnd();
+    return true;
+  }
+
   // ---- message primitives ----
 
-  function addUser(text) {
+  function addUser(text, meta = {}) {
     const row = div("flex justify-end");
+    if (meta.turnId) row.dataset.turnId = meta.turnId;
     row.appendChild(div("max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-zinc-900 px-3 py-2 text-[13px] text-white dark:bg-zinc-100 dark:text-zinc-900", esc(text)));
     return append(row);
   }
@@ -395,6 +412,99 @@ export function createPanel(opts = {}) {
     });
   }
 
+  let rewindCleanup = null;
+  function exitRewindMode() {
+    rewindCleanup?.();
+    rewindCleanup = null;
+  }
+
+  function summarizeTurn(t) {
+    const text = String(t.previewText || t.displayText || "").replace(/\s+/g, " ").trim();
+    return text.length > 42 ? text.slice(0, 42) + "…" : text || "（空输入）";
+  }
+
+  function enterRewindMode({ turns = [], onPick, onListAll, onCancel } = {}) {
+    exitRewindMode();
+    return new Promise((resolve) => {
+      let done = false;
+      const cleanups = [];
+      const finish = (turn) => {
+        if (done) return;
+        done = true;
+        exitRewindMode();
+        resolve(turn || null);
+      };
+      const bar = div("rounded-xl bg-blue-500/[.08] p-2.5 text-[12px] text-blue-700 ring-1 ring-blue-500/20 dark:bg-blue-400/[.07] dark:text-blue-300 dark:ring-blue-400/20");
+      bar.innerHTML =
+        `<div class="font-medium">选择要回退到哪一轮之前</div>` +
+        `<div class="mt-1 text-blue-700/80 dark:text-blue-300/80">点击任意用户消息，或查看所有回合。</div>` +
+        `<div class="mt-2 flex gap-2"><button type="button" data-rw-list class="rounded-lg bg-blue-600 px-2.5 py-1 text-white hover:bg-blue-500">查看所有回合</button><button type="button" data-rw-cancel class="rounded-lg bg-blue-950/[.06] px-2.5 py-1 text-blue-700 hover:bg-blue-950/[.1] dark:bg-white/10 dark:text-blue-200">取消</button></div>`;
+      append(bar);
+      cleanups.push(() => bar.remove());
+
+      const PICK_CLS = ["outline-2", "outline-offset-2", "outline-blue-600/75", "cursor-pointer"];
+      turns.forEach((t) => {
+        const row = t.userNode;
+        if (!row?.isConnected) return;
+        const bubble = row.firstElementChild || row;
+        bubble.classList.add(...PICK_CLS);
+        const badge = div("ml-2 shrink-0 cursor-pointer self-center whitespace-nowrap text-[11px] text-blue-600 dark:text-blue-400", `回退到此轮之前 · 最近第 ${t.count} 轮`);
+        row.appendChild(badge);
+        const pick = (e) => { e.preventDefault(); e.stopPropagation(); onPick?.(t); finish(t); };
+        row.addEventListener("click", pick);
+        const badgePick = (e) => { e.preventDefault(); e.stopPropagation(); onPick?.(t); finish(t); };
+        badge.addEventListener("click", badgePick);
+        cleanups.push(() => {
+          row.removeEventListener("click", pick);
+          badge.removeEventListener("click", badgePick);
+          bubble.classList.remove(...PICK_CLS);
+          badge.remove();
+        });
+      });
+
+      bar.querySelector("[data-rw-cancel]").addEventListener("click", () => { onCancel?.(); finish(null); });
+      bar.querySelector("[data-rw-list]").addEventListener("click", async () => { onListAll?.(); const picked = await showRewindTurnList({ turns }); if (picked) finish(picked); });
+      rewindCleanup = () => cleanups.splice(0).reverse().forEach((fn) => { try { fn(); } catch {} });
+    });
+  }
+
+  function showRewindTurnList({ turns = [] } = {}) {
+    return new Promise((resolve) => {
+      const card = div("rounded-xl bg-zinc-950/[.03] p-2.5 ring-1 ring-zinc-950/[.07] dark:bg-white/[.03] dark:ring-white/[.08]");
+      const rows = turns.map((t, i) => {
+        const flags = [t.hadWorkspaceEdit ? "含工作区修改" : "", t.hadRunCode ? "含设备运行" : "", t.status && t.status !== "closed" ? t.status : ""].filter(Boolean).join(" · ");
+        return `<button type="button" data-rw-i="${i}" class="w-full rounded-lg bg-white px-2.5 py-1.5 text-left text-[12px] text-zinc-700 ring-1 ring-zinc-950/[.06] hover:ring-blue-500/40 dark:bg-white/5 dark:text-zinc-200 dark:ring-white/10"><span class="font-medium text-zinc-900 dark:text-zinc-100">最近第 ${t.count} 轮</span><span class="ml-2">${esc(summarizeTurn(t))}</span>${flags ? `<div class="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">${esc(flags)}</div>` : ""}</button>`;
+      }).join("");
+      card.innerHTML =
+        `<div class="text-[12.5px] font-medium text-zinc-900 dark:text-zinc-100">所有可回退回合</div>` +
+        `<div class="m3e-scroll mt-2 flex max-h-72 flex-col gap-1.5 overflow-y-auto">${rows}</div>` +
+        `<button type="button" data-rw-close class="mt-2 rounded-lg px-2.5 py-1 text-[12px] text-zinc-500 hover:bg-zinc-950/[.05] hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-white/5 dark:hover:text-zinc-200">关闭</button>`;
+      append(card);
+      const finish = (turn) => { card.remove(); resolve(turn || null); };
+      card.addEventListener("click", (e) => {
+        const i = e.target.closest?.("[data-rw-i]")?.getAttribute("data-rw-i");
+        if (i != null) finish(turns[+i]);
+        else if (e.target.closest?.("[data-rw-close]")) finish(null);
+      });
+    });
+  }
+
+  function confirmRewind({ turn, count, hasRunCode, hasWorkspaceSnapshot = true } = {}) {
+    const detail = [
+      `将回退最近 ${count || turn?.count || 1} 轮对话。`,
+      hasWorkspaceSnapshot ? "默认同时恢复工作区。" : "该回合缺少工作区快照，只能仅回退聊天。",
+      hasRunCode ? "注意：已经下发到设备运行的副作用无法撤销。" : "",
+    ].filter(Boolean).join("\n");
+    return ask({
+      question: `确认回退到「${summarizeTurn(turn)}」之前？\n${detail}`,
+      options: [
+        { label: "对话 + 工作区", description: hasWorkspaceSnapshot ? "回退聊天并恢复 Blockly 工作区" : "缺少工作区快照，不可用" },
+        { label: "仅对话", description: "只回退聊天、任务清单和模型上下文" },
+        { label: "取消", description: "不改变当前状态" },
+      ],
+    }).then((v) => v === "对话 + 工作区" && hasWorkspaceSnapshot ? "both" : v === "仅对话" ? "chat" : null);
+  }
+
   // ---- header / status helpers ----
   const setBoard = (text, cls = "") => {
     const label = text.replace(/^[●⚠]\s*/, "");
@@ -561,6 +671,7 @@ export function createPanel(opts = {}) {
     host, root,
     // view primitives
     addUser, notice, beginAssistant, toolCard, setTodos, confirm, ask,
+    feedMark, restoreFeedMark, enterRewindMode, exitRewindMode, showRewindTurnList, confirmRewind,
     // header / status
     setBoard, setStatus, setBusy, setHidden, setGenerateEnabled, setDark, loadConfig,
     openSettings: () => settings.classList.remove("hidden"),

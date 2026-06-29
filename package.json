@@ -39,6 +39,7 @@
     "e2e:patch": "bun e2e/patch.e2e.mjs",
     "e2e:smoke": "bun e2e/agent-smoke.e2e.mjs",
     "e2e:ask": "bun e2e/agent-ask.e2e.mjs",
+    "e2e:rewind": "bun e2e/agent-rewind.e2e.mjs",
     "e2e:filepanel": "bun e2e/filepanel.e2e.mjs",
     "eval": "bun eval/run-eval.mjs"
   },

@@ -9,8 +9,13 @@ const COMPACT_PROMPT =
   "尚未完成的任务、以及任何需要延续的上下文。只输出摘要本身。";
 
 export function createHistory(system = "") {
-  // messages[0] is always the system message; turns follow.
+  // messages[0] is always the system message; turns follow. Keep the array object
+  // stable where possible because runAgentTurn mutates the live reference in place.
   let messages = [{ role: "system", content: system }];
+  let turns = [];
+  let nextTurnId = 1;
+
+  const closed = () => turns.filter((t) => t.status === "closed");
 
   const api = {
     /** Live array passed to runAgentTurn (it appends assistant + tool messages). */
@@ -21,10 +26,47 @@ export function createHistory(system = "") {
 
     addUser(content) { messages.push({ role: "user", content: String(content) }); return api; },
 
-    /** Drop everything but the system prompt. */
-    clear() { messages = [messages[0]]; return api; },
+    beginTurn(content, meta = {}) {
+      const turn = { id: "t" + nextTurnId++, messageStart: messages.length, messageEnd: null, status: "open", meta: { ...meta } };
+      messages.push({ role: "user", content: String(content) });
+      turns.push(turn);
+      return turn;
+    },
 
-    /** Number of non-system turns. */
+    closeTurn(turn, meta = {}) {
+      const t = turns.find((x) => x === turn || x.id === turn?.id || x.id === turn);
+      if (!t || t.status !== "open") return null;
+      t.messageEnd = messages.length;
+      t.status = "closed";
+      t.meta = { ...(t.meta || {}), ...meta };
+      return { ...t, meta: { ...(t.meta || {}) } };
+    },
+
+    discardTurn(turn) {
+      const i = turns.findIndex((x) => x === turn || x.id === turn?.id || x.id === turn);
+      if (i < 0) return false;
+      const [t] = turns.splice(i, 1);
+      if (messages.length > t.messageStart) messages.length = t.messageStart;
+      return true;
+    },
+
+    rewind(count = 1) {
+      const n = Number(count);
+      const done = closed();
+      if (!Number.isSafeInteger(n) || n <= 0 || n > done.length) return { ok: false, count: 0, available: done.length };
+      const target = done[done.length - n];
+      messages.length = target.messageStart;
+      turns = turns.filter((t) => t.messageStart < target.messageStart);
+      return { ok: true, count: n, targetTurnId: target.id, messageStart: target.messageStart, available: closed().length };
+    },
+
+    rewindableCount() { return closed().length; },
+    closedTurns() { return closed().map((t) => ({ ...t, meta: { ...(t.meta || {}) } })); },
+
+    /** Drop everything but the system prompt. */
+    clear() { messages.length = 1; turns = []; return api; },
+
+    /** Number of non-system messages (legacy; not rewindable user turns). */
     turnCount() { return messages.length - 1; },
 
     /**
@@ -36,10 +78,9 @@ export function createHistory(system = "") {
       if (messages.length <= 1) return "";
       const req = [...messages, { role: "user", content: COMPACT_PROMPT }];
       const summary = await client.complete(req, {});
-      messages = [
-        messages[0],
-        { role: "user", content: `# 对话摘要（之前的对话已压缩，请据此继续）\n${summary}` },
-      ];
+      messages.length = 1;
+      messages.push({ role: "user", content: `# 对话摘要（之前的对话已压缩，请据此继续）\n${summary}` });
+      turns = [];
       return summary;
     },
   };
