@@ -51,6 +51,7 @@ async function boot() {
   }
 
   const lock = createLock(caps);
+  const normalizeTheme = (t) => (String(t) === "modern" ? "modern" : "classic");
   // 主题：默认 classic；modern 为 opt-in 且持久化（cfg m3e_theme）。两套面板公共 API 完全一致，
   // 故回调只定义一次、两主题复用，切换时 remount（见 mountPanel/remountPanel/saveConfig）。
   const panelCallbacks = {
@@ -116,8 +117,6 @@ async function boot() {
   }
 
   // ---- 主题：classic（默认，静态打进主包）⇄ modern（opt-in，懒加载 dist/modern.min.js）----
-  const normalizeTheme = (t) => (String(t) === "modern" ? "modern" : "classic");
-
   // 懒加载 modern 资产：用 <script src=base/modern.min.js> 注入（IIFE 会挂 globalThis.__m3eModern），
   // 与书签 loader 注入主包同一套路。无数据基址（dev 直接注入）或加载失败则 reject，由调用方回落 classic。
   function loadModern() {
