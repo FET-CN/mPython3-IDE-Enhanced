@@ -65,11 +65,11 @@
     border-radius: 8px;
     padding: 9px 11px;
     overflow: auto;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: "M3E Mono", monospace;
     font-size: 11.5px;
     line-height: 1.55;
   }
   .dark .m3e-prose pre { background: rgba(255,255,255,.05); }
-  .m3e-prose code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .m3e-prose code { font-family: "M3E Mono", monospace; }
   .m3e-prose p + p { margin-top: .5rem; }
 }

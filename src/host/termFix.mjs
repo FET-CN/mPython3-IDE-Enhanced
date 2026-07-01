@@ -27,16 +27,15 @@
 // 模式切换时也会调 `resetTerm`→`clearFn`，本地串口模式下本会崩并把终端 dispose 后无法重建
 // （正是「夜间模式常开 → 控制台出生即空白」的根因）；护栏让站点自己的 resetTerm 也不再崩。
 
-// 字体钉死成内嵌的等宽 web 字体（'M3E Mono'，JetBrains Mono 子集），末尾兜底裸 `monospace`。
+// 字体钉死成内嵌的等宽 web 字体（'M3E Mono'，Noto Sans Mono CJK SC），末尾兜底裸 `monospace`。
 // 实测（Linux/Firefox）：具名系统等宽字体（Courier New / DejaVu Sans Mono…）会被 fontconfig
 // 替换成比例字体且「匹配成功」，于是永远轮不到字体栈末尾的 monospace → 字形窄、单元格宽 → 字散开。
 // 内嵌字体（FontFace + data URL）不受 fontconfig 替换影响、canvas 也认，比裸 monospace 更整齐一致。
 // 两条腿一起上才生效：① CSS（钉到 .xterm 与隐藏的字符测量元素）决定**单元格宽度**的测量；
 // ② options.fontFamily 决定 canvas 渲染器**画字**用的字体（canvas 不读 CSS）。
-import { FONT_FAMILY, FONT_FACE_NAME, FONT_WOFF2_B64 } from "./termFont.mjs";
+import { ensureEmbeddedFont, FONT_FAMILY, FONT_SIZE } from "./font.mjs";
 
 const MONO = FONT_FAMILY;
-const FONT_SIZE = 14;
 const TERM_TYPES = ["term", "terminal"]; // term=控制台，terminal=REPL 终端
 const FONT_CSS_ID = "m3e-term-font";
 
@@ -53,19 +52,11 @@ function isOrphan(doc, term) {
  * 无非 CSS 替代）。返回字体的 load Promise（或 null）供就绪后重建图集。
  */
 function ensureFont(doc) {
-  let loading = null;
-  try {
-    if (typeof FontFace === "function" && doc.fonts && typeof doc.fonts.add === "function" && !doc.__m3eFontFace) {
-      const ff = new FontFace(FONT_FACE_NAME, "url(data:font/woff2;base64," + FONT_WOFF2_B64 + ") format('woff2')", { style: "normal", weight: "400", display: "block" });
-      doc.fonts.add(ff);
-      doc.__m3eFontFace = ff;
-      try { loading = ff.load(); loading.catch(() => {}); } catch {}
-    }
-  } catch {}
+  const loading = ensureEmbeddedFont(doc);
   if (!doc.getElementById(FONT_CSS_ID)) {
     const st = doc.createElement("style");
     st.id = FONT_CSS_ID;
-    st.textContent = ".xterm,.xterm *,.xterm-char-measure-element{font-family:" + MONO + " !important}";
+    st.textContent = ".xterm,.xterm *,.xterm-helper-textarea,.xterm-char-measure-element{font-family:" + MONO + " !important}";
     (doc.head || doc.documentElement).appendChild(st);
   }
   return loading;

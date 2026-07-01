@@ -11,7 +11,7 @@ module.exports = {
     extend: {
       fontFamily: {
         sans: ['system-ui', '"PingFang SC"', '"Microsoft YaHei"', "sans-serif"],
-        mono: ['ui-monospace', "SFMono-Regular", "Menlo", "monospace"],
+        mono: ['"M3E Mono"', "monospace"],
       },
     },
   },

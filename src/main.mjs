@@ -12,6 +12,7 @@ import { blockTreeHtml } from "./ui/blockTree.mjs";
 import { createLock } from "./host/lock.mjs";
 import { installSerialProxy } from "./host/serialProxy.mjs";
 import { installTerminalFix } from "./host/termFix.mjs";
+import { installHostFontFix } from "./host/hostFontFix.mjs";
 import { installFilePanel } from "./host/filePanel.mjs";
 import { createPanel } from "./ui/panel.mjs";
 import { loadData, cfg } from "./runtime/data.mjs";
@@ -134,6 +135,9 @@ async function boot() {
   // 修复站点「右下角控制台/文件面板不显示」的 bug（xterm 孤立 + clearFn 崩溃 + 比例字体）。
   // 与串口代理无关，对原生 Chrome 用户也是净改善；站点结构不符时安静降级。
   try { installTerminalFix(caps); } catch (e) { log.info("终端自愈未启用", e?.message); }
+  // 给宿主页原生 AICG 对话框 / Ace 编辑器套用同一份内嵌等宽字体。xterm 的 canvas 字形与
+  // 单元格测量仍由 termFix 单独处理；这里负责普通 DOM 与 Ace 实例。
+  try { installHostFontFix(caps); } catch (e) { log.info("宿主等宽字体未启用", e?.message); }
   // 在网页版启用并补全站点「文件管理面板」：翻 isElectron 让面板渲染、routerDesk/​$serial 集中护栏、
   // 设备文件（mPythonList）经串口代理跑 os.* 读写。getExec 每次取「当前」串口代理 link 的 exec。
   try {
