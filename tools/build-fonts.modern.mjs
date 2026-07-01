@@ -130,6 +130,10 @@ for j in jobs:
     opts.name_legacy = True
     opts.recalc_bounds = True
     opts.drop_tables = []
+    # 关 hinting：丢掉 fpgm/prep/cvt/gasp 及 glyf 指令。web 字体不需要 TrueType 指令，
+    # 且源本就是 Unhinted 构建；保留会让子集产物残留畸形 gasp（末尾缺 0xFFFF 哨兵）与
+    # maxp.maxZones，被 Firefox OTS 丢表 → 整字体加载失败。
+    opts.hinting = False
     opts.layout_features = ["*"] if j["mode"] == "latin" else ["ccmp", "locl", "calt", "liga", "kern", "vert", "vrt2"]
     opts.glyph_names = False
     opts.notdef_outline = True
@@ -141,6 +145,21 @@ for j in jobs:
     else:
         ss.populate(text=subset_text)
     ss.subset(font)
+    # 保险：即便 hinting 关了，也显式清掉 TrueType 指令表（glyf 字体才有；CFF 的 Geist 无此表）
+    # 并把 maxp 指令相关字段归零 —— 杜绝 OTS 报 "Bad maxZones" / "gasp last record" 而丢表。
+    if "glyf" in font:
+        for t in ("gasp", "fpgm", "prep", "cvt "):
+            if t in font:
+                del font[t]
+        mp = font["maxp"]
+        # maxZones 合法值为 1（不使用 Twilight Zone）或 2；0 会被 OTS 判非法而丢 maxp。
+        if hasattr(mp, "maxZones"):
+            mp.maxZones = 1
+        for attr in ("maxTwilightPoints", "maxStorage",
+                     "maxFunctionDefs", "maxInstructionDefs",
+                     "maxStackElements", "maxSizeOfInstructions"):
+            if hasattr(mp, attr):
+                setattr(mp, attr, 0)
     # 重命名 family（OFL 要求），weight 由 FontFace 描述符区分。
     fam, sub = j["family"], j["sub"]
     name = font["name"]
