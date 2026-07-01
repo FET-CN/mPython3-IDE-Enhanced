@@ -58,6 +58,25 @@ async function bundle() {
   return out;
 }
 
+/** modern 主题资产独立成包 —— 默认 classic 的主包不含它（零负担）；用户选 modern 时由 main.min.js
+ *  用 <script> 懒加载此包（IIFE 挂 globalThis.__m3eModern）。含预编译 v4 CSS + 内嵌字体 + Micro 图标。 */
+async function bundleModern() {
+  const out = resolve(DIST_DIR, "modern.min.js");
+  const res = await Bun.build({
+    entrypoints: [resolve(ROOT, "src/ui/panelModern.entry.mjs")],
+    outdir: DIST_DIR,
+    naming: "modern.min.js",
+    minify: true,
+    target: "browser",
+    format: "iife",
+  });
+  if (!res.success) {
+    for (const m of res.logs) console.error(m);
+    throw new Error("bun build modern 失败");
+  }
+  return out;
+}
+
 /** The address-bar bootstrap, frozen into the user's bookmark at install time.
  *  Re-clicking a bookmark for an already-open panel just refocuses it (no dead
  *  return); otherwise it pins the data base, a loader version, and the build rev,
@@ -115,16 +134,18 @@ code{background:#f0f3f7;padding:2px 6px;border-radius:6px}pre{background:#0f1722
 async function main() {
   assembleData();
   const out = await bundle();
+  const modernOut = await bundleModern();
   // Stamp the runtime with the current loader version + build rev so it can detect
   // a stale bookmark (whose baked __M3E_BOOT_VERSION__ predates LOADER_VERSION).
   writeFileSync(out, `window.__M3E_LOADER_VERSION__=${JSON.stringify(LOADER_VERSION)};window.__M3E_BUILD_REV__=${JSON.stringify(BUILD_REV)};\n` + readFileSync(out, "utf8"));
   const size = existsSync(out) ? (statSync(out).size / 1024).toFixed(0) : "?";
+  const modernSize = existsSync(modernOut) ? (statSync(modernOut).size / 1024).toFixed(0) : "?";
   const bm = loader();
   writeFileSync(resolve(DIST_DIR, "bookmarklet.txt"), bm);
   let kb = "?";
   try { kb = JSON.parse(readFileSync(resolve(DIST_DIR, "catalog.index.json"))).length; } catch {}
   writeFileSync(resolve(DIST_DIR, "install.html"), installPage(bm, BASE, kb));
-  console.error(`[bookmarklet] main.min.js ${size}KB; base=${BASE}; rev=${BUILD_REV}; loader=${LOADER_VERSION}; → dist/{bookmarklet.txt,install.html}`);
+  console.error(`[bookmarklet] main.min.js ${size}KB; modern.min.js ${modernSize}KB; base=${BASE}; rev=${BUILD_REV}; loader=${LOADER_VERSION}; → dist/{bookmarklet.txt,install.html}`);
 }
 
 main();

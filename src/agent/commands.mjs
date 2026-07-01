@@ -10,6 +10,7 @@ export const COMMANDS = {
   undo:    { kind: "local",  desc: "撤销上一次积木改动" },
   rewind:  { kind: "local",  desc: "进入回退模式，选择要回到的用户回合" },
   config:  { kind: "local",  desc: "打开设置面板" },
+  theme:   { kind: "local",  desc: "切换界面主题（/theme classic | modern，重置界面、保留上下文）" },
   help:    { kind: "local",  desc: "显示可用命令" },
   review:  { kind: "prompt", desc: "审查当前积木程序并给出改进建议" },
   run:     { kind: "prompt", desc: "在已连接的掌控板上运行当前程序" },
@@ -69,6 +70,7 @@ export function helpText() {
   const lines = ["可用斜杠命令："];
   for (const [name, c] of Object.entries(COMMANDS)) lines.push(`  /${name} — ${c.desc}`);
   lines.push("  /rewind N --chat-only — 快速回退 N 轮；--chat-only 只回退聊天，不恢复工作区");
+  lines.push("  /theme modern | classic — 切换界面主题（默认 classic，选择持久化）");
   lines.push("  /undo 只撤销最近一次积木编辑；/rewind 回到某个用户回合之前。");
   lines.push("直接输入中文需求即可开始对话（例如：按A键时在屏幕显示温度）。");
   return lines.join("\n");
