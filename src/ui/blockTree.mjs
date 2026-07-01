@@ -39,7 +39,17 @@ function familyOf(colour) {
   if (/var|list/.test(c)) return "orange";
   return "zinc";
 }
-const pal = (colour) => PALETTE[familyOf(colour)] || PALETTE.zinc;
+const pal = (colour, palette = PALETTE) => palette[familyOf(colour)] || palette.zinc;
+
+// modern 主题调色板：uidotsh 禁多彩强调 / 禁 indigo，故所有色族折叠到中性 zinc chip，
+// 行内值块用**唯一强调蓝**点缀。familyOf(colour) 命中的非 zinc 键都回落到这里的 zinc。
+// 类名写成字面量，供 build:css:modern 的 v4 扫描到（动态类会被 purge）。
+export const MODERN_PALETTE = {
+  zinc: {
+    chip: "border-zinc-950/10 bg-zinc-950/[.03] dark:border-white/10 dark:bg-white/[.05]",
+    inline: "bg-blue-500/10 text-blue-700 dark:bg-blue-400/15 dark:text-blue-300",
+  },
+};
 
 /** Current display value of a field: dropdown → its zh label, else the raw value. */
 function fieldDisplay(node, field) {
@@ -53,11 +63,11 @@ function fieldDisplay(node, field) {
 }
 
 /** Render a value block (sits in an input slot) as an inline rounded chip. */
-function inlineValue(node, catalog) {
+function inlineValue(node, catalog, palette) {
   if (!node || !node.type) return "";
   const schema = catalog?.get?.(node.type);
-  const label = blockLabel(node, schema, catalog, true) || node.type;
-  return `<span class="rounded px-1 py-px ${pal(schema?.colour).inline}">${label}</span>`;
+  const label = blockLabel(node, schema, catalog, true, palette) || node.type;
+  return `<span class="rounded px-1 py-px ${pal(schema?.colour, palette).inline}">${label}</span>`;
 }
 
 /** Build a block's title text: fill the zh template's %1/%2… placeholders, in
@@ -65,7 +75,7 @@ function inlineValue(node, catalog) {
  *  placeholders (usually statement slots, drawn separately below) are dropped.
  *  Without a zh template we fall back to the raw type. All text is escaped; only
  *  the inline-value chips inject (already-escaped) markup. */
-function blockLabel(node, schema, catalog, inline = false) {
+function blockLabel(node, schema, catalog, inline = false, palette) {
   const tpl = schema?.zh;
   // Ordered slot queue approximating Blockly's args0 order (lossy: catalog keeps
   // fields and values separately, so we concatenate fields then values).
@@ -78,12 +88,12 @@ function blockLabel(node, schema, catalog, inline = false) {
   if (!inline) {
     for (const v of schema?.values || []) {
       const child = node.inputs?.[v.name];
-      slots.push(child ? inlineValue(child, catalog) : "");
+      slots.push(child ? inlineValue(child, catalog, palette) : "");
     }
   } else {
     for (const v of schema?.values || []) {
       const child = node.inputs?.[v.name];
-      if (child) slots.push(inlineValue(child, catalog));
+      if (child) slots.push(inlineValue(child, catalog, palette));
     }
   }
   if (!tpl) return esc(node.type);
@@ -92,21 +102,21 @@ function blockLabel(node, schema, catalog, inline = false) {
 }
 
 /** Render one statement block (+ its nested statement bodies) as a chip. */
-function blockChip(node, catalog) {
+function blockChip(node, catalog, palette) {
   if (!node || !node.type) return "";
   const schema = catalog?.get?.(node.type);
-  const title = blockLabel(node, schema, catalog, false) || esc(node.type);
+  const title = blockLabel(node, schema, catalog, false, palette) || esc(node.type);
   let bodies = "";
   for (const [name, seq] of Object.entries(node.statements || {})) {
     if (!Array.isArray(seq) || !seq.length) continue;
     bodies +=
       `<div class="ml-2.5 mt-1 border-l-2 border-zinc-950/10 pl-2 dark:border-white/10">` +
       `<div class="mb-0.5 text-[10px] text-zinc-400 dark:text-zinc-500">${esc(name)}</div>` +
-      seq.map((n) => blockChip(n, catalog)).join("") +
+      seq.map((n) => blockChip(n, catalog, palette)).join("") +
       `</div>`;
   }
   return (
-    `<div class="rounded-md border px-2 py-1 ${pal(schema?.colour).chip} [&+&]:mt-1">` +
+    `<div class="rounded-md border px-2 py-1 ${pal(schema?.colour, palette).chip} [&+&]:mt-1">` +
     `<div class="text-[11.5px] leading-snug text-zinc-700 dark:text-zinc-200">${title}</div>` +
     bodies +
     `</div>`
@@ -119,14 +129,16 @@ function blockChip(node, catalog) {
  * → a muted "empty workspace" line.
  * @param program IR — Program (Stack[] or a single Stack of nodes)
  * @param catalog Map<type, schema> (see catalogFromArray)
+ * @param opts    { palette } — 调色板；缺省用 classic 多彩 PALETTE，modern 传 MODERN_PALETTE。
  */
-export function blockTreeHtml(program, catalog) {
+export function blockTreeHtml(program, catalog, opts = {}) {
+  const palette = opts.palette || PALETTE;
   const stacks = Array.isArray(program) && program.every((e) => Array.isArray(e)) ? program : program ? [program] : [];
   const nonEmpty = stacks.filter((s) => Array.isArray(s) && s.length);
   if (!nonEmpty.length) {
     return `<div class="text-[11.5px] text-zinc-400 dark:text-zinc-500">（空工作区）</div>`;
   }
   return nonEmpty
-    .map((stack) => `<div class="space-y-1">${stack.map((n) => blockChip(n, catalog)).join("")}</div>`)
+    .map((stack) => `<div class="space-y-1">${stack.map((n) => blockChip(n, catalog, palette)).join("")}</div>`)
     .join(`<div class="my-1.5 h-px bg-zinc-950/10 dark:bg-white/10"></div>`);
 }
