@@ -1,0 +1,85 @@
+/* src/ui/tailwind.modern.css — Tailwind v4 输入样式表（仅 modern 主题）。
+ *
+ * 由 tools/build-css.modern.mjs 用 @tailwindcss/cli(v4) 编译成静态字符串，内联进
+ * modern 面板的 Shadow DOM。classic 仍走 v3（tailwind.config.cjs + build-css.mjs），两条管线互不干扰。
+ *
+ * 跳过 preflight：不引入 preflight.css，只手动引入 theme + utilities 两层，
+ * 天然不带 preflight（宿主页跑不了 preflight，Shadow DOM 已隔离，另加下方最小作用域 reset）。
+ * 用 `tailwindcss4`（= npm:tailwindcss@4 的别名）而非裸 `tailwindcss`：顶层 `tailwindcss` 被 classic
+ * 钉在 v3，同名包无法共存，故 v4 以别名暴露，二者井水不犯河水。
+ * 暗色：类驱动（@custom-variant dark），跟随宿主夜间（main.mjs 切 .m3e 根的 .dark），非 prefers-color-scheme。 */
+
+@layer theme, base, components, utilities;
+
+@import "tailwindcss4/theme.css" layer(theme);
+@import "tailwindcss4/utilities.css" layer(utilities);
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* 扫描 modern 面板与图标、以及 confirm 预览用的 blockTree（含 MODERN_PALETTE 字面量）。 */
+@source "./panelModern.mjs";
+@source "./iconsMicro.mjs";
+@source "./blockTree.mjs";
+
+@theme {
+  /* 内嵌字体族（fontsModern 注册的 FontFace 名，见 fontsModern.generated.mjs）。
+     display 复用 sans + medium 字重，不设独立 display 族。末尾兜底系统/等宽，字体缺失时优雅降级。 */
+  --font-sans: "M3E Geist", "M3E Sarasa", system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "M3E Sarasa Mono", "M3E Mono", ui-monospace, monospace;
+}
+
+@layer base {
+  :host {
+    all: initial;
+    /* 与 classic 同：宿主是 light DOM 里的全屏 click-through 覆盖层，position:fixed 钉在文档根，
+       内部 wrap/launcher 用 absolute 并重新开启指针事件；避免被宿主高层 UI 盖住。 */
+    position: fixed;
+    inset: 0;
+    z-index: 2147483647;
+    pointer-events: none;
+  }
+  /* 原生控件（caret、autofill、滚动条）跟随面板主题，与 utilities 同一个 .dark 类切换。 */
+  .m3e { color-scheme: light; }
+  .m3e.dark { color-scheme: dark; }
+  /* 最小 reset（替代 preflight，作用域限定在 shadow 树内）。 */
+  *, *::before, *::after { box-sizing: border-box; }
+  * { margin: 0; }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  textarea, input, select { font: inherit; color: inherit; }
+  svg { display: block; }
+  .m3e-scroll { scrollbar-width: thin; scrollbar-color: rgba(113, 113, 122, .4) transparent; }
+  .m3e-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+  .m3e-scroll::-webkit-scrollbar-thumb { background: rgba(113, 113, 122, .4); border-radius: 999px; }
+  .dark .m3e-scroll { scrollbar-color: rgba(255, 255, 255, .2) transparent; }
+  .dark .m3e-scroll::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .18); }
+}
+
+@layer components {
+  /* 流式光标：细、中性的一条竖线，不用亮强调块，保持安静。 */
+  .m3e-caret::after {
+    content: "";
+    display: inline-block;
+    width: 2px;
+    height: 1.05em;
+    margin-left: 2px;
+    vertical-align: text-bottom;
+    background: currentColor;
+    opacity: .55;
+    animation: m3e-blink 1.1s steps(2, start) infinite;
+  }
+  @keyframes m3e-blink { to { opacity: 0; } }
+
+  /* 助手气泡里的代码块：无边框、凹陷的 well。亮为基，暗经 .dark 覆盖。 */
+  .m3e-prose pre {
+    background: rgba(24, 24, 27, .045);
+    border-radius: 8px;
+    padding: 9px 11px;
+    overflow: auto;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.55;
+  }
+  .dark .m3e-prose pre { background: rgba(255, 255, 255, .05); }
+  .m3e-prose code { font-family: var(--font-mono); }
+  .m3e-prose p + p { margin-top: .5rem; }
+}

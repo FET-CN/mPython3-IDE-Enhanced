@@ -27,6 +27,8 @@
     "build:catalog": "bun tools/build-catalog.mjs",
     "build:knowledge": "bun tools/build-knowledge.mjs",
     "build:css": "bun tools/build-css.mjs",
+    "build:css:modern": "bun tools/build-css.modern.mjs",
+    "build:fonts:modern": "bun tools/build-fonts.modern.mjs",
     "build:term-font": "bun tools/build-term-font.mjs",
     "build:bookmarklet": "bun tools/build-bookmarklet.mjs",
     "build": "bun run build:catalog && bun run build:knowledge && bun run build:css && bun run build:bookmarklet",
@@ -44,9 +46,11 @@
     "eval": "bun eval/run-eval.mjs"
   },
   "devDependencies": {
+    "@tailwindcss/cli": "^4.3.2",
     "linkedom": "^0.18.5",
     "playwright": "^1.61.1",
     "tailwindcss": "3",
+    "tailwindcss4": "npm:tailwindcss@4.3.2",
     "vitest": "^2.1.8"
   }
 }

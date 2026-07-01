@@ -19,8 +19,14 @@ const out = resolve(ROOT, "src/ui/styles.generated.mjs");
 const tmp = mkdtempSync(join(tmpdir(), "m3e-css-"));
 const cssFile = join(tmp, "out.css");
 
-const bin = resolve(ROOT, "node_modules/.bin/tailwindcss");
-const res = spawnSync(bin, ["-i", input, "-o", cssFile, "--minify"], {
+// Pin the CLASSIC panel to Tailwind v3 explicitly. The modern theme adds
+// @tailwindcss/cli (v4) as a devDep, and both packages claim the same
+// `tailwindcss` bin — so node_modules/.bin/tailwindcss resolves to whichever
+// was installed last (v4). Invoking the v3 package's CLI directly (via the
+// current runtime) keeps classic on v3 and its output byte-identical, no matter
+// what owns the shared bin. Modern compiles via tools/build-css.modern.mjs.
+const v3cli = resolve(ROOT, "node_modules/tailwindcss/lib/cli.js");
+const res = spawnSync(process.execPath, [v3cli, "-i", input, "-o", cssFile, "--minify"], {
   cwd: ROOT,
   encoding: "utf8",
   stdio: ["ignore", "pipe", "pipe"],
