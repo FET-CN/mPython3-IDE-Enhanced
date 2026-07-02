@@ -5,7 +5,7 @@
 //   bun run build:css:modern   → 改了 modern 面板/图标类名或 tailwind.modern.css 后重新生成
 //
 // 用 @tailwindcss/cli(v4)。扫描的源文件由 tailwind.modern.css 里的 @source 指定
-// （panelModern.mjs / iconsMicro.mjs / blockTree.mjs）。classic 走 build-css.mjs（v3），互不干扰。
+// （panelModern.mjs / iconsMicro.mjs / blockTree.mjs）。旧 classic 工具链仍留在 build-css.mjs。
 
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";

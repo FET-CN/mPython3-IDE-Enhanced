@@ -1,10 +1,9 @@
 // src/ui/panelModern.mjs — modern 主题聊天面板（Shadow DOM，注入宿主页）。
 //
-// 与 classic 的 src/ui/panel.mjs **公共 API 完全一致**（createPanelModern(opts) 及其返回对象逐一同签名），
-// main.mjs 据 m3e_theme 二选一挂载，调用签名不变。这里是纯视图：渲染消息 / 工具卡 / 任务清单 /
+// main.mjs 直接挂载本面板。这里是纯视图：渲染消息 / 工具卡 / 任务清单 /
 // 流式气泡 / 确认卡，回调（onSend/onStop/onSaveConfig）交给 main.mjs 接 agent 循环。
 //
-// 形态：右缘抽屉，可切换为可拖拽/缩放浮窗（停靠状态 + 几何持久化于 m3e_* localStorage，与 classic 共享）。
+// 形态：右缘抽屉，可切换为可拖拽/缩放浮窗（停靠状态 + 几何持久化于 m3e_* localStorage）。
 // 主题：严格遵循 uidotsh —— 中性只用 zinc、全局唯一强调蓝（blue-600 亮 / blue-500 暗，仅焦点环/主按钮/
 // 链接/激活）、分隔用不透明度色而非实心灰线、卡片 ring-1 + inset-ring-white/5、暗底 zinc-950(非纯黑)、
 // dark:shadow-none、每界面一个 primary、数字 tabular-nums、根 antialiased+isolate。图标一律 Heroicons Micro。
@@ -124,11 +123,6 @@ export function createPanelModern(opts = {}) {
           <input id="m3e-model" name="model" data-cfg="model" placeholder="deepseek-chat" class="rounded-lg bg-white px-2.5 py-2 text-xs text-zinc-900 ring-1 ring-zinc-950/10 placeholder:text-zinc-400 focus-visible:outline-2 focus-visible:-outline-offset-1 focus-visible:outline-blue-500 dark:bg-black/40 dark:text-zinc-100 dark:ring-white/10 dark:placeholder:text-zinc-500">
           <label class="text-xs text-zinc-500 dark:text-zinc-400" for="m3e-serial">串口代理地址（Firefox 等用，留空则用浏览器原生）</label>
           <input id="m3e-serial" name="serialProxy" data-cfg="serialProxy" placeholder="ws://127.0.0.1:8765" class="rounded-lg bg-white px-2.5 py-2 text-xs text-zinc-900 ring-1 ring-zinc-950/10 placeholder:text-zinc-400 focus-visible:outline-2 focus-visible:-outline-offset-1 focus-visible:outline-blue-500 dark:bg-black/40 dark:text-zinc-100 dark:ring-white/10 dark:placeholder:text-zinc-500">
-          <label class="text-xs text-zinc-500 dark:text-zinc-400" for="m3e-theme">界面主题</label>
-          <select id="m3e-theme" name="theme" data-cfg="theme" class="rounded-lg bg-white px-2.5 py-2 text-xs text-zinc-900 ring-1 ring-zinc-950/10 focus-visible:outline-2 focus-visible:-outline-offset-1 focus-visible:outline-blue-500 dark:bg-black/40 dark:text-zinc-100 dark:ring-white/10">
-            <option value="classic">经典 classic</option>
-            <option value="modern">现代 modern</option>
-          </select>
           <button data-act="saveCfg" type="button" class="mt-1 self-end rounded-lg bg-blue-600 px-3 py-1.5 text-[0.8125rem] font-medium text-white transition-colors hover:bg-blue-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 dark:bg-blue-500 dark:hover:bg-blue-400">保存设置</button>
         </div>
 
@@ -149,7 +143,7 @@ export function createPanelModern(opts = {}) {
     </div>`;
   doc.body.appendChild(host);
 
-  // modern 激活时注册内嵌字体（Geist + Sarasa）；失败优雅降级到系统/等宽（见 fontsModern）。
+  // 注册内嵌字体（Geist + Sarasa）；失败优雅降级到系统/等宽（见 fontsModern）。
   try { activateModernFonts(doc); } catch {}
 
   const $ = (s) => root.querySelector(s);
@@ -489,7 +483,7 @@ export function createPanelModern(opts = {}) {
     stopBtn.classList.toggle("hidden", !b);
     stopBtn.classList.toggle("grid", b);
   };
-  // ---- form: drawer ⇄ floating window (persisted under m3e_*, shared with classic) ----
+  // ---- form: drawer ⇄ floating window (persisted under m3e_*) ----
   const LS = globalThis.localStorage;
   const readLS = (k, d) => { try { return LS?.getItem("m3e_" + k) ?? d; } catch { return d; } };
   const writeLS = (k, v) => { try { LS?.setItem("m3e_" + k, v); } catch {} };

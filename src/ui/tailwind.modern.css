@@ -1,12 +1,12 @@
 /* src/ui/tailwind.modern.css — Tailwind v4 输入样式表（仅 modern 主题）。
  *
  * 由 tools/build-css.modern.mjs 用 @tailwindcss/cli(v4) 编译成静态字符串，内联进
- * modern 面板的 Shadow DOM。classic 仍走 v3（tailwind.config.cjs + build-css.mjs），两条管线互不干扰。
+ * modern 面板的 Shadow DOM；这是当前唯一运行时面板样式。
  *
  * 跳过 preflight：不引入 preflight.css，只手动引入 theme + utilities 两层，
  * 天然不带 preflight（宿主页跑不了 preflight，Shadow DOM 已隔离，另加下方最小作用域 reset）。
- * 用 `tailwindcss4`（= npm:tailwindcss@4 的别名）而非裸 `tailwindcss`：顶层 `tailwindcss` 被 classic
- * 钉在 v3，同名包无法共存，故 v4 以别名暴露，二者井水不犯河水。
+ * 用 `tailwindcss4`（= npm:tailwindcss@4 的别名）而非裸 `tailwindcss`：仓库仍保留旧
+ * classic v3 工具链，同名包无法共存，故 v4 以别名暴露。
  * 暗色：类驱动（@custom-variant dark），跟随宿主夜间（main.mjs 切 .m3e 根的 .dark），非 prefers-color-scheme。 */
 
 @layer theme, base, components, utilities;

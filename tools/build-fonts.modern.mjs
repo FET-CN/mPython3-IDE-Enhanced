@@ -1,8 +1,8 @@
 // tools/build-fonts.modern.mjs — 生成 src/ui/fontsModern.generated.mjs（modern 主题内嵌
 // 字体，纯数据模块，**自动生成，勿手改**）。同 build-term-font.mjs 的理由：书签注入第三方
 // HTTPS 页，外链字体会被站点 CSP 拦、离线失效；故把子集化后的 woff2 base64 随包内联，交给
-// FontFace 注册。生成物已提交，**不入 `bun run build`**（同 build:term-font）；modern 未激活
-// 时根本不加载本模块（走独立 dist/modern.min.js 懒加载）。加载失败时字体栈末尾兜底 system-ui /
+// FontFace 注册。生成物已提交，**不入 `bun run build`**（同 build:term-font）。运行时
+// main.min.js 直接包含 modern 面板与字体激活器；加载失败时字体栈末尾兜底 system-ui /
 // monospace，优雅降级。
 //
 // 三族两重：
@@ -203,4 +203,3 @@ const body = faces
   .join("\n");
 writeFileSync(OUT, `${banner}export const FONTS = [\n${body}\n];\n`);
 console.log(`[fonts:modern] 已写入 ${OUT}`);
-

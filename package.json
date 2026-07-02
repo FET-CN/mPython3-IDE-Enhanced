@@ -31,7 +31,7 @@
     "build:fonts:modern": "bun tools/build-fonts.modern.mjs",
     "build:term-font": "bun tools/build-term-font.mjs",
     "build:bookmarklet": "bun tools/build-bookmarklet.mjs",
-    "build": "bun run build:catalog && bun run build:knowledge && bun run build:css && bun run build:bookmarklet",
+    "build": "bun run build:catalog && bun run build:knowledge && bun run build:css:modern && bun run build:bookmarklet",
     "dump:toolbox": "bun tools/dump-toolbox.mjs",
     "build:visible": "bun tools/build-visible-from-vendor.mjs",
     "test": "bunx vitest run",

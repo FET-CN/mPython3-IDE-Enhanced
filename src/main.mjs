@@ -14,8 +14,8 @@ import { installSerialProxy } from "./host/serialProxy.mjs";
 import { installTerminalFix } from "./host/termFix.mjs";
 import { installHostFontFix } from "./host/hostFontFix.mjs";
 import { installFilePanel } from "./host/filePanel.mjs";
-import { createPanel } from "./ui/panel.mjs";
-import { loadData, cfg, baseUrl } from "./runtime/data.mjs";
+import { createPanelModern } from "./ui/panelModern.mjs";
+import { loadData, cfg } from "./runtime/data.mjs";
 import { makeClient } from "./llm/client.mjs";
 import { boardFromMaster, resolveVersion } from "./kb/knowledge.mjs";
 import { coreTypes, preferredTypes } from "./kb/retriever.mjs";
@@ -51,23 +51,15 @@ async function boot() {
   }
 
   const lock = createLock(caps);
-  const normalizeTheme = (t) => (String(t) === "modern" ? "modern" : "classic");
-  // 主题：默认 classic；modern 为 opt-in 且持久化（cfg m3e_theme）。两套面板公共 API 完全一致，
-  // 故回调只定义一次、两主题复用，切换时 remount（见 mountPanel/remountPanel/saveConfig）。
+  // 只保留 modern 面板。旧版曾持久化 m3e_theme；这里写回 modern，避免历史配置误导外部调试。
+  try { cfg.set("theme", "modern"); } catch {}
   const panelCallbacks = {
     onSend: ({ text }) => handleInput(text),
     onStop: () => currentAbort?.abort(),
     onSaveConfig: (c) => saveConfig(c),
   };
-  let theme = normalizeTheme(cfg.get("theme", "classic"));
-  let panel;
-  {
-    const mounted = await mountPanel(theme);
-    panel = mounted.panel;
-    theme = mounted.theme;
-    panel.loadConfig({ ...cfg.llm(), serialProxy: cfg.get("serialProxy", ""), theme });
-    if (mounted.note) panel.notice(mounted.note, "err");
-  }
+  let panel = createPanelModern(panelCallbacks);
+  panel.loadConfig({ ...cfg.llm(), serialProxy: cfg.get("serialProxy", "") });
 
   const session = { lastSnapshot: null, todos: [], approvals: new Set() };
   let data = null;
@@ -116,65 +108,12 @@ async function boot() {
     return board;
   }
 
-  // ---- 主题：classic（默认，静态打进主包）⇄ modern（opt-in，懒加载 dist/modern.min.js）----
-  // 懒加载 modern 资产：用 <script src=base/modern.min.js> 注入（IIFE 会挂 globalThis.__m3eModern），
-  // 与书签 loader 注入主包同一套路。无数据基址（dev 直接注入）或加载失败则 reject，由调用方回落 classic。
-  function loadModern() {
-    const g = globalThis;
-    if (g.__m3eModern?.createPanelModern) return Promise.resolve(g.__m3eModern.createPanelModern);
-    const base = baseUrl();
-    if (!base) return Promise.reject(new Error("无数据基址（dev 注入无法懒加载 modern）"));
-    return new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = base + "/modern.min.js?t=" + Date.now();
-      s.onload = () => (g.__m3eModern?.createPanelModern ? resolve(g.__m3eModern.createPanelModern) : reject(new Error("modern 资产未正确加载")));
-      s.onerror = () => reject(new Error("加载 modern 资产失败，请确认已托管 modern.min.js"));
-      (document.head || document.documentElement).appendChild(s);
-    });
-  }
-
-  // 按主题取面板工厂并实例化。modern 加载失败时安全回落 classic，并回传提示。
-  async function mountPanel(want) {
-    let t = normalizeTheme(want);
-    let note = "";
-    let factory = createPanel;
-    if (t === "modern") {
-      try { factory = await loadModern(); }
-      catch (e) { t = "classic"; factory = createPanel; note = "modern 资产不可用（" + (e?.message || e) + "），已回退经典主题"; }
-    }
-    return { panel: factory(panelCallbacks), theme: t, note };
-  }
-
-  // 运行时切主题 = remount：建新面板 → 拆旧 host → 重连配置/主题/任务清单。对话上下文（history/session/
-  // turnRecords）与面板解耦，全部保留；仅界面记录重置（诚实告知）。
-  async function remountPanel(want) {
-    const mounted = await mountPanel(want);
-    try { panel?.host?.remove(); } catch {}
-    panel = mounted.panel;
-    theme = mounted.theme;
-    cfg.set("theme", theme);
-    panel.exitRewindMode?.(); rewindMode = false;
-    panel.loadConfig({ ...cfg.llm(), serialProxy: cfg.get("serialProxy", ""), theme });
-    refreshBoard();
-    panel.setDark(currentDark);
-    panel.setTodos(session.todos);
-    if (mounted.note) panel.notice(mounted.note, "err");
-    else panel.notice(`已切换到${theme === "modern" ? "现代 modern" : "经典 classic"}主题（对话上下文保留，界面已重置）`, "ok");
-  }
-
-  // 保存设置：持久化所有键并重建 client/串口；若 theme 变了则 remount（运行中禁止切换）。
+  // 保存设置：持久化 LLM / 串口配置并重建 client/串口。
   async function saveConfig(c) {
-    const prev = normalizeTheme(cfg.get("theme", "classic"));
-    for (const k in c) cfg.set(k, c[k]);
+    for (const k in c) if (k !== "theme") cfg.set(k, c[k]);
     rebuildClient();
     setupSerialProxy();
-    const next = normalizeTheme(cfg.get("theme", "classic"));
-    if (next !== prev) {
-      if (isBusy || currentAbort) { cfg.set("theme", prev); panel.setStatus("请先停止当前回合再切换主题", "err"); return; }
-      await remountPanel(next);
-    } else {
-      panel.setStatus("设置已保存", "ok");
-    }
+    panel.setStatus("设置已保存", "ok");
   }
 
   // 多个串口时，让用户在面板里选一个（替代浏览器原生的串口选择弹窗）。
@@ -299,18 +238,6 @@ async function boot() {
       case "config":
         panel.openSettings();
         break;
-      case "theme": {
-        const raw = String(arg || "").trim().toLowerCase();
-        const cur = normalizeTheme(cfg.get("theme", "classic"));
-        if (raw !== "modern" && raw !== "classic") {
-          panel.notice(`当前主题：${cur === "modern" ? "现代 modern" : "经典 classic"}。用法：/theme modern 或 /theme classic`);
-          break;
-        }
-        if (raw === cur) { panel.notice(`已是${raw === "modern" ? "现代 modern" : "经典 classic"}主题`); break; }
-        if (isBusy || currentAbort) { panel.notice("请先停止当前回合再切换主题。", "err"); break; }
-        await remountPanel(raw);
-        break;
-      }
       case "help": {
         const card = panel.toolCard({ icon: "help", title: "命令帮助" });
         card.setBody(helpText());
@@ -553,8 +480,7 @@ async function boot() {
   function confirmEdit(title, args) {
     let detail = `共 ${Array.isArray(args?.ops) ? args.ops.length : "?"} 个编辑算子。`;
     let preview = null;
-    // modern 主题的预览积木树走无 indigo 的单蓝调色板；classic 用默认多彩。
-    const bt = theme === "modern" ? { palette: MODERN_PALETTE } : {};
+    const bt = { palette: MODERN_PALETTE };
     try {
       const pre = computeEditPreview(caps, args?.ops, data.catalog);
       if (pre.summary?.length) detail = pre.summary.join("；");
