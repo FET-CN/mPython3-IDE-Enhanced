@@ -33,6 +33,15 @@ export function createHistory(system = "") {
       return turn;
     },
 
+    prependToOpenTurn(turn, content) {
+      const t = turns.find((x) => x === turn || x.id === turn?.id || x.id === turn);
+      if (!t || t.status !== "open") return false;
+      const current = messages[t.messageStart];
+      if (!current || current.role !== "user") return false;
+      current.content = String(content) + "\n\n" + String(current.content || "");
+      return true;
+    },
+
     closeTurn(turn, meta = {}) {
       const t = turns.find((x) => x === turn || x.id === turn?.id || x.id === turn);
       if (!t || t.status !== "open") return null;

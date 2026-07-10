@@ -1,6 +1,6 @@
 // src/agent/commands.mjs — Slash-command parsing for the chat input. Command
 // NAMES are English (per project decision); descriptions are zh-CN. Local commands
-// (clear/compact/undo/config/help/rewind) are handled by the controller in main.mjs;
+// (clear/compact/undo/config/help/rewind/agents) are handled by the controller in main.mjs;
 // "prompt" commands (review/run) expand into a user message that drives the agent
 // loop and its tools.
 
@@ -11,6 +11,7 @@ export const COMMANDS = {
   rewind:  { kind: "local",  desc: "进入回退模式，选择要回到的用户回合" },
   config:  { kind: "local",  desc: "打开设置面板" },
   help:    { kind: "local",  desc: "显示可用命令" },
+  agents:  { kind: "local",  desc: "查看并管理当前页的 SubAgent" },
   review:  { kind: "prompt", desc: "审查当前积木程序并给出改进建议" },
   run:     { kind: "prompt", desc: "在已连接的掌控板上运行当前程序" },
 };

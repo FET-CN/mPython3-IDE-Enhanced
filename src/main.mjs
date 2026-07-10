@@ -23,6 +23,7 @@ import { buildAgentSystem } from "./ctx/agent-prompt.mjs";
 import { createHistory } from "./agent/history.mjs";
 import { runAgentTurn } from "./agent/loop.mjs";
 import { ALL_TOOLS } from "./agent/tools/index.mjs";
+import { createSubagentManager } from "./agent/subagents.mjs";
 import { parseSlash, commandPrompt, COMMANDS, helpText, parseRewindArgs } from "./agent/commands.mjs";
 import { log } from "./runtime/log.mjs";
 
@@ -36,6 +37,11 @@ const TOOL_META = {
   ask_user: { icon: "help", label: "请用户澄清" },
   think: { icon: "think", label: "思考" },
   update_todos: { icon: "todos", label: "更新任务清单" },
+  spawn_agent: { icon: "agents", label: "启动 SubAgent" },
+  send_agent_message: { icon: "message", label: "发送 SubAgent 消息" },
+  list_agents: { icon: "agents", label: "列出 SubAgent" },
+  get_agent: { icon: "read", label: "读取 SubAgent" },
+  stop_agent: { icon: "stop", label: "停止 SubAgent" },
 };
 
 async function boot() {
@@ -57,6 +63,7 @@ async function boot() {
     onSend: ({ text }) => handleInput(text),
     onStop: () => currentAbort?.abort(),
     onSaveConfig: (c) => saveConfig(c),
+    onStopAgent: (id) => subagents?.stop?.({ to: id }),
   };
   let panel = createPanelModern(panelCallbacks);
   panel.loadConfig({ ...cfg.llm(), serialProxy: cfg.get("serialProxy", "") });
@@ -71,6 +78,7 @@ async function boot() {
   let serialProxy = null;
   let isBusy = false;
   let rewindMode = false;
+  let subagents = null;
   let currentDark = false;
   const turnRecords = [];
 
@@ -100,6 +108,7 @@ async function boot() {
   function rebuildClient() {
     const llm = cfg.llm();
     client = makeClient({ ...llm, fetchImpl: window.fetch.bind(window) });
+    subagents?.configure?.({ client });
   }
   function refreshBoard() {
     board = boardFromMaster(currentMaster());
@@ -171,6 +180,12 @@ async function boot() {
       version,
     });
     history = createHistory(system);
+    subagents = createSubagentManager({ runner: runAgentTurn, onChange: (tasks) => panel.setAgents?.(tasks) });
+    subagents.configure({ client, systemPrompt: system, baseContext: () => ({ caps, data, board, version }) });
+    window.__m3e__.agents = Object.freeze({
+      list: (filter) => subagents.list(filter),
+      get: (to, options) => subagents.get(to, options),
+    });
     panel.notice(`已就绪：${data.index.length} 个积木 · ${board.label}`, "ok");
     panel.notice("用中文描述需求或提问，输入 /help 查看命令。");
   } catch (e) {
@@ -214,6 +229,7 @@ async function boot() {
     switch (name) {
       case "clear":
         panel.exitRewindMode?.(); rewindMode = false;
+        subagents?.clear?.();
         history?.clear(); turnRecords.length = 0; panel.clearFeed(); session.todos = []; panel.setTodos([]);
         panel.notice("已清空对话（工作区保留）", "ok");
         break;
@@ -225,6 +241,11 @@ async function boot() {
         try { await history.compact(client); turnRecords.length = 0; panel.notice("已把对话压缩为摘要", "ok"); }
         catch (e) { panel.notice("压缩失败：" + e.message, "err"); }
         finally { setBusy(false); }
+        break;
+      case "agents":
+        if (!panel.openAgents?.(arg.trim())) {
+          panel.notice(arg.trim() ? `找不到 SubAgent：${arg.trim()}` : "当前没有 SubAgent。", "err");
+        }
         break;
       case "rewind":
         await runRewindCommand(arg);
@@ -309,6 +330,7 @@ async function boot() {
     const hist = history.rewind(count);
     if (!hist.ok) { panel.notice("回退失败：历史边界不可用", "err"); return; }
     const keep = new Set(history.closedTurns().map((t) => t.id));
+    subagents?.rewind?.({ removedTurnIds: removed.map((r) => r.id), keptTurnIds: keep });
     for (let i = turnRecords.length - 1; i >= 0; i--) if (!keep.has(turnRecords[i].id)) turnRecords.splice(i, 1);
 
     const uiOk = panel.restoreFeedMark(target.feedMark);
@@ -346,6 +368,8 @@ async function boot() {
     const n = countBlocks(readWorkspaceIR(caps));
     const hint = n ? `（当前工作区约 ${n} 个积木；编辑前请调用 read_workspace 获取精确结构与 id）` : "（当前工作区为空）";
     historyTurn = history.beginTurn(`${contentText}\n${hint}`);
+    const notifications = subagents?.drainNotifications?.(historyTurn.id) || [];
+    if (notifications.length) history.prependToOpenTurn(historyTurn, notifications.join("\n\n"));
     const userNode = panel.addUser(displayText, { turnId: historyTurn.id });
     record = {
       id: historyTurn.id, historyTurn, feedMark, userNode, workspaceSnap, workspaceSnapOk,
@@ -364,9 +388,16 @@ async function boot() {
         messages: history.messages(),
         tools: ALL_TOOLS,
         client,
-        ctx: { caps, data, board, version, session, confirm: confirmTool, ask: (q) => panel.ask(q) },
+        ctx: {
+          caps, data, board, version, session, subagents,
+          parentTurnId: historyTurn.id,
+          parentMessages: history.messages(),
+          confirm: confirmTool,
+          ask: (q) => panel.ask(q),
+        },
         onEvent: ui.onEvent,
         signal: currentAbort.signal,
+        unlimitedConcurrencyTools: ["spawn_agent"],
       });
       ui.finish();
       record.status = r.stopped === "done" ? "closed" : r.stopped;
@@ -386,14 +417,11 @@ async function boot() {
   /** Translate agent-loop events into panel rendering. */
   function createTurnUI(record = null) {
     let cur = null;            // current streaming assistant bubble
-    const pending = new Map(); // name → queue of open tool cards
+    const pending = new Map(); // tool_call id → open tool card
     let runCard = null;        // live run_code output card
     let runText = "";          // accumulated run_code output
 
-    const openCard = (name, card) => {
-      if (!pending.has(name)) pending.set(name, []);
-      pending.get(name).push(card);
-    };
+    const openCard = (id, card) => pending.set(id, card);
     const closeBubble = (hasTools) => {
       if (!cur) return;
       const txt = cur.text();
@@ -436,7 +464,7 @@ async function boot() {
             const meta = TOOL_META[ev.name] || { icon: "·", label: ev.name };
             const sub = ev.name === "search_blocks" && ev.args?.query ? "：" + ev.args.query : "";
             const card = panel.toolCard({ icon: meta.icon, title: meta.label + sub });
-            openCard(ev.name, card);
+            openCard(ev.id || ev.name, card);
             if (ev.name === "run_code") { runCard = card; runText = ""; }
             break;
           }
@@ -444,13 +472,13 @@ async function boot() {
             if (runCard) { runText += ev.chunk; runCard.setBody(runText, true); }
             break;
           case "tool_result": {
-            const card = pending.get(ev.name)?.shift();
-            if (card) card.setTone(ev.is_error ? "err" : "ok");
+            const card = pending.get(ev.id || ev.name);
+            if (card) { card.setTone(ev.is_error ? "err" : "ok"); pending.delete(ev.id || ev.name); }
             break;
           }
           case "tool_rejected": {
-            const card = pending.get(ev.name)?.shift();
-            if (card) { card.setTone("err"); card.setBody("已拒绝"); }
+            const card = pending.get(ev.id || ev.name);
+            if (card) { card.setTone("err"); card.setBody("已拒绝"); pending.delete(ev.id || ev.name); }
             break;
           }
           case "applied":

@@ -7,6 +7,8 @@ describe("slash commands", () => {
     expect(helpText()).toContain("/rewind");
     expect(helpText()).toContain("--chat-only");
     expect(helpText()).toContain("/undo");
+    expect(COMMANDS.agents).toMatchObject({ kind: "local" });
+    expect(parseSlash("/agents a1")).toEqual({ name: "agents", arg: "a1" });
   });
 
   it("parses rewind slash input and preserves raw args", () => {

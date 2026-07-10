@@ -31,7 +31,7 @@ export const runCodeTool = {
       const res = await runCurrent(caps, {
         timeout,
         signal: ctx?.signal,
-        onOutput: (chunk) => ctx?.emit?.({ type: "run_output", chunk }),
+        onOutput: (chunk) => ctx?.emit?.({ type: "run_output", id: ctx?.toolCallId, chunk }),
       });
       const out = (res.output || "").trim() || "(无输出)";
       const head = res.error ? "运行出错：" : "运行完成。输出：";

@@ -50,6 +50,14 @@ describe("history rewind turns", () => {
     expect(h.rewindableCount()).toBe(0);
   });
 
+  it("prepends hidden context to an open turn", () => {
+    const h = createHistory("sys");
+    const t = h.beginTurn("visible user text");
+    expect(h.prependToOpenTurn(t, "<task-notification>done</task-notification>")).toBe(true);
+    expect(h.messages()[1].content).toMatch(/^<task-notification>/);
+    expect(h.messages()[1].content).toContain("visible user text");
+  });
+
   it("clear keeps the live array reference and clears turns", () => {
     const h = createHistory("sys");
     const live = h.messages();

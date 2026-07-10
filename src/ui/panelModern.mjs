@@ -14,6 +14,9 @@ import { ICON } from "./iconsMicro.mjs";
 import { activateModernFonts } from "./fontsModern.mjs";
 
 const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+const escAttr = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({
+  "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
+}[c]));
 
 /** 轻量、安全的 Markdown → HTML。顶层围栏代码块；散文内：ATX 标题、引用、有/无序列表、分隔线、
  *  段落、行内跨度（code/bold/italic/strike/link）。先转义再叠加标记。 */
@@ -127,6 +130,15 @@ export function createPanelModern(opts = {}) {
         </div>
 
         <div class="border-t border-zinc-950/5 dark:border-white/10">
+          <section data-agents aria-label="SubAgent 任务" class="hidden border-b border-zinc-950/5 dark:border-white/10">
+            <button data-agents-head type="button" aria-controls="m3e-agents-list" aria-expanded="false" class="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-zinc-950/3 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-blue-500 dark:hover:bg-white/3">
+              <span class="text-zinc-500 dark:text-zinc-400">${ICON.agents}</span>
+              <span class="font-medium text-zinc-700 dark:text-zinc-200">SubAgent</span>
+              <span data-agents-summary class="flex-1 truncate text-zinc-500 tabular-nums dark:text-zinc-400"></span>
+              <span data-agents-chev class="text-zinc-400 transition-transform duration-150 dark:text-zinc-500">${ICON.chevron}</span>
+            </button>
+            <div id="m3e-agents-list" data-agents-list role="list" class="m3e-scroll hidden max-h-64 overflow-y-auto"></div>
+          </section>
           <div data-progress class="hidden border-b border-zinc-950/5 dark:border-white/10"></div>
           <div class="px-3 py-2.5">
             <div data-status class="mb-1.5 hidden text-xs tabular-nums text-zinc-500 dark:text-zinc-500"></div>
@@ -159,6 +171,11 @@ export function createPanelModern(opts = {}) {
   const stopBtn = $("[data-act='stop']");
   const settings = $("[data-settings]");
   const dockBtn = $("[data-act='dock']");
+  const agentsEl = $("[data-agents]");
+  const agentsHead = $("[data-agents-head]");
+  const agentsSummary = $("[data-agents-summary]");
+  const agentsChev = $("[data-agents-chev]");
+  const agentsList = $("[data-agents-list]");
   const progress = $("[data-progress]");
   const resizeHandle = $("[data-resize]");
 
@@ -301,6 +318,173 @@ export function createPanelModern(opts = {}) {
     lastTodos = Array.isArray(todos) ? todos : [];
     renderProgress();
   }
+
+  // ---- SubAgent task bar ----
+  const AGENT_STATUS = {
+    running: { label: "运行中", icon: "running", tone: "text-blue-600 dark:text-blue-400" },
+    completed: { label: "已完成", icon: "check", tone: "text-emerald-600 dark:text-emerald-400" },
+    failed: { label: "失败", icon: "alert", tone: "text-red-600 dark:text-red-400" },
+    killed: { label: "已停止", icon: "stop", tone: "text-zinc-400 dark:text-zinc-500" },
+    pending: { label: "等待中", icon: "pending", tone: "text-zinc-400 dark:text-zinc-500" },
+  };
+  const AGENT_ROLE = {
+    "general-purpose": "综合",
+    explore: "探索",
+    plan: "规划",
+    review: "审查",
+  };
+  let agentsExpanded = false;
+  let selectedAgent = "";
+  let lastAgents = [];
+  let agentDurationTimer = null;
+
+  const agentId = (task) => String(task?.id ?? task?.agentId ?? task?.agent_id ?? "");
+  const agentName = (task) => String(task?.name ?? task?.title ?? agentId(task));
+  const agentRole = (task) => String(task?.role ?? task?.agentType ?? task?.agent_type ?? "general-purpose");
+  const agentStatus = (task) => {
+    const raw = String(task?.status || "pending").toLowerCase();
+    if (["done", "success", "succeeded"].includes(raw)) return "completed";
+    if (["error", "errored"].includes(raw)) return "failed";
+    if (["aborted", "cancelled", "canceled", "stopped"].includes(raw)) return "killed";
+    return AGENT_STATUS[raw] ? raw : "pending";
+  };
+  const agentText = (value) => {
+    if (value == null) return "";
+    if (typeof value === "string") return value;
+    if (value instanceof Error) return value.message;
+    if (Array.isArray(value)) return agentText(value.at(-1));
+    if (typeof value === "object") {
+      for (const key of ["message", "label", "title", "detail", "name", "toolName", "tool_name", "tool"]) {
+        if (value[key] != null) return String(value[key]);
+      }
+      try { return JSON.stringify(value); } catch {}
+    }
+    return String(value);
+  };
+  const agentStartedAt = (task) => task?.startedAt ?? task?.started_at ?? task?.createdAt ?? task?.created_at;
+  const agentEndedAt = (task) => task?.endedAt ?? task?.ended_at ?? task?.completedAt ?? task?.completed_at;
+  const asMillis = (value) => {
+    if (value == null || value === "") return NaN;
+    if (typeof value === "number") return value < 1e11 ? value * 1000 : value;
+    return Date.parse(value);
+  };
+  const agentDuration = (task) => {
+    const start = asMillis(agentStartedAt(task));
+    if (agentStatus(task) === "running" && Number.isFinite(start)) return Math.max(0, Date.now() - start);
+    const explicit = task?.durationMs ?? task?.duration_ms ?? task?.elapsedMs ?? task?.elapsed_ms;
+    if (Number.isFinite(Number(explicit))) return Math.max(0, Number(explicit));
+    if (!Number.isFinite(start)) return NaN;
+    const end = agentStatus(task) === "running" ? Date.now() : asMillis(agentEndedAt(task));
+    return Number.isFinite(end) ? Math.max(0, end - start) : NaN;
+  };
+  const formatDuration = (duration) => {
+    if (!Number.isFinite(duration)) return "—";
+    const seconds = Math.max(0, Math.floor(duration / 1000));
+    if (seconds < 60) return `${seconds} 秒`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes} 分 ${String(seconds % 60).padStart(2, "0")} 秒`;
+    return `${Math.floor(minutes / 60)} 时 ${String(minutes % 60).padStart(2, "0")} 分`;
+  };
+  const agentDetail = (task, status) => {
+    const activity = agentText(task?.activity ?? task?.lastActivity ?? task?.last_activity ?? task?.currentActivity ?? task?.current_activity);
+    const result = agentText(task?.result ?? task?.output);
+    const error = agentText(task?.error);
+    if (status === "failed") return { kind: "error", text: error || result || "任务失败" };
+    if (status === "completed") return { kind: "result", text: result || activity || "任务已完成" };
+    if (status === "killed") return { kind: "activity", text: activity || "任务已停止" };
+    if (status === "running") return { kind: "activity", text: activity || "正在处理任务…" };
+    return { kind: "activity", text: activity || "等待开始" };
+  };
+  const syncAgentsExpanded = () => {
+    agentsHead.setAttribute("aria-expanded", String(agentsExpanded));
+    agentsList.classList.toggle("hidden", !agentsExpanded);
+    agentsChev.classList.toggle("rotate-90", agentsExpanded);
+  };
+  function updateAgentDurations() {
+    if (!host.isConnected) {
+      globalThis.clearInterval?.(agentDurationTimer);
+      agentDurationTimer = null;
+      return;
+    }
+    agentsList.querySelectorAll("[data-agent-duration]").forEach((el) => {
+      const row = el.closest("[data-agent-task]");
+      const task = lastAgents.find((candidate) => agentId(candidate) === row?.dataset.agentId);
+      if (task) el.textContent = formatDuration(agentDuration(task));
+    });
+  }
+  function renderAgents({ scrollTarget = false } = {}) {
+    if (!lastAgents.length) {
+      agentsEl.classList.add("hidden");
+      agentsSummary.textContent = "";
+      agentsList.innerHTML = "";
+      selectedAgent = "";
+      return;
+    }
+    agentsEl.classList.remove("hidden");
+    const running = lastAgents.filter((task) => agentStatus(task) === "running").length;
+    agentsSummary.textContent = `${running} 个运行中 · 共 ${lastAgents.length} 个`;
+    agentsList.innerHTML = lastAgents.map((task) => {
+      const id = agentId(task);
+      const name = agentName(task);
+      const role = agentRole(task);
+      const status = agentStatus(task);
+      const state = AGENT_STATUS[status];
+      const detail = agentDetail(task, status);
+      const active = selectedAgent && (selectedAgent === id || selectedAgent === name);
+      const detailTone = detail.kind === "error" ? "text-red-600 dark:text-red-400" : "text-zinc-500 dark:text-zinc-400";
+      const stop = status === "running"
+        ? `<button data-agent-stop="${escAttr(id)}" type="button" title="停止 ${escAttr(name)}" aria-label="停止 ${escAttr(name)}" class="relative grid size-7 shrink-0 place-items-center rounded-lg text-zinc-400 hover:bg-zinc-950/5 hover:text-zinc-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 dark:text-zinc-500 dark:hover:bg-white/5 dark:hover:text-zinc-200"><span class="absolute top-1/2 left-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden" aria-hidden="true"></span>${ICON.stop}</button>`
+        : "";
+      return `<article role="listitem" data-agent-task data-agent-id="${escAttr(id)}" data-agent-name="${escAttr(name)}" data-agent-status="${status}"${active ? " data-agent-active=\"true\"" : ""} class="border-t border-zinc-950/5 ${active ? "bg-blue-500/5 dark:bg-blue-400/5" : ""} px-3 py-2.5 first:border-t-0 dark:border-white/10">` +
+        `<div class="flex items-start gap-2">` +
+          `<span data-agent-status-icon class="${state.tone}">${ICON[state.icon]}</span>` +
+          `<div class="min-w-0 flex-1">` +
+            `<div class="flex min-w-0 items-baseline gap-1.5">` +
+              `<div class="truncate text-xs font-medium text-zinc-800 dark:text-zinc-100">${esc(name)}</div>` +
+              `<div data-agent-role class="shrink-0 text-xs text-zinc-400 dark:text-zinc-500">${esc(AGENT_ROLE[role] || role)} · #${esc(id)}</div>` +
+            `</div>` +
+            `<div class="flex items-baseline gap-1.5 text-xs text-zinc-400 tabular-nums dark:text-zinc-500"><span data-agent-status-label>${state.label}</span><span aria-hidden="true">·</span><span data-agent-duration>${formatDuration(agentDuration(task))}</span></div>` +
+          `</div>` + stop +
+        `</div>` +
+        `<div data-agent-${detail.kind} title="${escAttr(detail.text)}" class="m3e-scroll max-h-24 overflow-y-auto pt-1 pl-6 text-xs wrap-break-word whitespace-pre-wrap ${detailTone}">${esc(detail.text)}</div>` +
+      `</article>`;
+    }).join("");
+    syncAgentsExpanded();
+    if (!scrollTarget || !selectedAgent) return;
+    const target = [...agentsList.querySelectorAll("[data-agent-task]")]
+      .find((row) => row.dataset.agentId === selectedAgent || row.dataset.agentName === selectedAgent);
+    target?.scrollIntoView?.({ block: "nearest" });
+  }
+  function setAgents(tasks) {
+    if (Array.isArray(tasks)) lastAgents = tasks;
+    else if (tasks && typeof tasks === "object") {
+      const id = agentId(tasks);
+      const index = lastAgents.findIndex((task) => agentId(task) === id);
+      if (index < 0) lastAgents = [...lastAgents, tasks];
+      else lastAgents = lastAgents.map((task, taskIndex) => taskIndex === index ? tasks : task);
+    } else lastAgents = [];
+    renderAgents();
+    const hasRunning = lastAgents.some((task) => agentStatus(task) === "running");
+    if (hasRunning && agentDurationTimer == null) agentDurationTimer = globalThis.setInterval?.(updateAgentDurations, 1000) ?? null;
+    else if (!hasRunning && agentDurationTimer != null) {
+      globalThis.clearInterval?.(agentDurationTimer);
+      agentDurationTimer = null;
+    }
+  }
+  function openAgents(target) {
+    setHidden(false);
+    agentsExpanded = true;
+    const wanted = target == null ? "" : String(target);
+    selectedAgent = wanted;
+    renderAgents({ scrollTarget: true });
+    return wanted
+      ? lastAgents.some((task) => wanted === agentId(task) || wanted === agentName(task))
+      : lastAgents.length > 0;
+  }
+  agentsHead.addEventListener("click", () => {
+    agentsExpanded = !agentsExpanded;
+    syncAgentsExpanded();
+  });
 
   /** 行内结构化提问 → resolve 选中 label（单选）/ label 数组（多选）/ null（关闭）。与 confirm 卡呼应。 */
   function ask({ question, options = [], multi = false }) {
@@ -601,6 +785,8 @@ export function createPanelModern(opts = {}) {
   });
 
   root.addEventListener("click", (e) => {
+    const agentStop = e.target.closest?.("[data-agent-stop]");
+    if (agentStop) { opts.onStopAgent?.(agentStop.getAttribute("data-agent-stop")); return; }
     const act = e.target.closest?.("[data-act]")?.getAttribute("data-act");
     if (act === "toggle") setHidden(true);
     else if (act === "reopen") setHidden(false);
@@ -623,7 +809,7 @@ export function createPanelModern(opts = {}) {
   return {
     host, root,
     // view primitives
-    addUser, notice, beginAssistant, toolCard, setTodos, confirm, ask,
+    addUser, notice, beginAssistant, toolCard, setTodos, setAgents, openAgents, confirm, ask,
     feedMark, restoreFeedMark, enterRewindMode, exitRewindMode, showRewindTurnList, confirmRewind,
     // header / status
     setBoard, setStatus, setBusy, setHidden, setGenerateEnabled, setDark, loadConfig,

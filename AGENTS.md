@@ -8,7 +8,8 @@
 把中文自然语言转成 Blockly 积木并注入 online.mpython.cn / 掌控板 IDE 的 LLM 书签工具。
 现已是**多轮对话式编码助手**：聊天面板里一轮用户输入 → 工具调用 agent 循环（流式回复 +
 按需调用工具）→ 渲染。底层仍复用「生成 → 校验 → 修复」能力——它内嵌在 `edit_blocks`
-工具里（主循环本身就是修复循环，无嵌套 LLM）。会话状态仅在内存，刷新即清空。
+工具里（该修复循环本身不嵌套 LLM）。复杂只读任务可由独立上下文的 SubAgent 并行处理；
+全部会话与任务状态仅在内存，刷新即清空。
 
 ## 适配的板子（仅两款）
 
@@ -51,7 +52,7 @@
 ## 模块结构
 
 - `src/host/` —— **防腐层**：所有对 `window.vm` / Vuex store / 站点的访问。读写工作区、注入/快照、运行程序与回读串口均在此。串口适配 `serialProxy.mjs`（`navigator.serial` 垫片，经 WebSocket 接本地 `serial-proxy/`，让 Firefox 等也能连板）也归此层。
-- `src/agent/` —— agent 循环与工具：`loop.mjs`（流式 + 只读并发/写串行）、`history.mjs`（含 `/compact` 与缓存断点）、`commands.mjs`（斜杠命令）、`tools/*`（见下）。
+- `src/agent/` —— agent 循环与工具：`loop.mjs`（流式 + 只读并发/写串行）、`history.mjs`（含 `/compact` 与缓存断点）、`commands.mjs`（斜杠命令）、`subagents.mjs`（只读 SubAgent 的内存状态机、独立上下文、通知与回退生命周期）、`tools/*`（见下）。
 - `src/ctx/agent-prompt.mjs` —— 组装可缓存的系统提示词（身份 + 工具说明 + 算子语法 + 核心词汇）。
 - `src/ui/panelModern.mjs` —— 当前唯一运行时面板（uidotsh 规范：单蓝点缀、Heroicons Micro、内嵌 Geist/Sarasa 字体、Tailwind v4），由 `main.mjs` 直接导入。
 - `src/ui/panel.mjs` —— 历史 classic 面板源码（当前运行时不引用；仅在明确恢复多主题时维护）。
@@ -61,6 +62,8 @@
 ### 工具集（`src/agent/tools/`）
 
 只读工具（并发执行）：`read_workspace`、`search_blocks`、`think`、`update_todos`。
+SubAgent 管理工具（对宿主只读）：`spawn_agent`、`send_agent_message`、`list_agents`、`get_agent`、`stop_agent`；
+其中 `spawn_agent` 不受普通只读工具的 6 路并发上限约束，结果仍按原 tool-call 顺序回灌。
 写/交互工具（串行执行）：`edit_blocks`（写，`needsConfirm`，应用后回传转换的 Python 供模型自检）、
 `run_code`（操作设备，`needsConfirm`）、`ask_user`（结构化澄清提问，阻塞等待用户选择）。
 新增工具时在 `tools/` 建模块并注册进 `tools/index.mjs`；遵循 `{name, description, parameters, isReadOnly, needsConfirm, run}` 接口。
@@ -68,6 +71,7 @@
 ## 架构约束
 
 - **防腐层**：所有对 `window.vm` / 站点的访问必须集中在 `src/host/`，其他模块不得直接触碰宿主环境。
+- **SubAgent 边界与生命周期**：四种固定角色为 `general-purpose` / `explore` / `plan` / `review`，上下文可选 `isolated` 或 `fork`；子代理只开放 `read_workspace`、`search_blocks`、`think`，禁止写工作区、运行设备、询问用户、更新 todos 或继续派生。前台任务跟随父回合取消，后台任务独立运行；终态任务收到消息后保留原 transcript 和 ID、以新 `run_id` 在后台续跑。后台终态通知从下一次普通用户输入开始按上下文容量分批、每项只投递一次。`/rewind` 删除被回退回合创建或续发的任务及其通知，并把投递到被回退回合的其余存活任务通知重新排队；`/clear` 中止并清空全部任务与通知；`/compact` 保留任务、transcript 和待投递通知，压缩前任务不再参与之后的回退边界。所有状态仅存页面内存，刷新即清空。
 - **系统提示词保持稳定**：`src/ctx/prompts.mjs` 与 `src/ctx/agent-prompt.mjs` 是会被缓存的稳定前缀，改动需谨慎、尽量保持稳定。
 - **类型校验宽松**：`src/xml/validate.mjs` 只标记模型生成的错误，不做严格类型系统。
 - **UI 样式离线编译**：宿主页跑不了 Tailwind 运行时，故 `tools/build-css.modern.mjs` 把 Tailwind v4 预编译进 `src/ui/stylesModern.generated.mjs`（**已提交**）并内联到 Shadow DOM。改了 modern 面板 / 图标 / 积木树预览类名后需 `bun run build:css:modern` 重新生成。

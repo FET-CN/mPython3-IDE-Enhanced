@@ -7,6 +7,7 @@ import { runCodeTool } from "./runCode.mjs";
 import { askUserTool } from "./askUser.mjs";
 import { thinkTool } from "./think.mjs";
 import { updateTodosTool } from "./updateTodos.mjs";
+import { SUBAGENT_MANAGEMENT_TOOLS } from "./subagents.mjs";
 
 export const ALL_TOOLS = [
   readWorkspaceTool,
@@ -16,6 +17,7 @@ export const ALL_TOOLS = [
   askUserTool,
   thinkTool,
   updateTodosTool,
+  ...SUBAGENT_MANAGEMENT_TOOLS,
 ];
 
 /** Convert our tool defs into OpenAI `tools` function specs. */

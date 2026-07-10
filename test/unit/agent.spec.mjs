@@ -90,6 +90,63 @@ describe("runAgentTurn", () => {
     expect(messages.find((m) => m.role === "tool").content).toMatch(/拒绝/);
   });
 
+  it("fails closed when a confirmed tool has no confirmation channel", async () => {
+    let ran = false;
+    const writeTool = {
+      name: "w", description: "", parameters: { type: "object", properties: {} },
+      isReadOnly: false, needsConfirm: true,
+      run: async () => { ran = true; return { content: "bad" }; },
+    };
+    const messages = [{ role: "user", content: "x" }];
+    await runAgentTurn({
+      messages, tools: [writeTool], ctx: { session: { approvals: new Set() } },
+      client: scriptClient([{ tool_calls: [callOf("w", {})] }, { content: "ok" }]),
+    });
+    expect(ran).toBe(false);
+    expect(messages.find((m) => m.role === "tool")?.content).toMatch(/无法向用户请求确认/);
+  });
+
+  it("can remove the concurrency cap for selected tool batches", async () => {
+    let active = 0, peak = 0;
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const fanout = {
+      name: "fanout", description: "", parameters: { type: "object", properties: {} },
+      isReadOnly: true, needsConfirm: false,
+      run: async () => { active++; peak = Math.max(peak, active); if (active === 8) release(); await gate; active--; return { content: "ok" }; },
+    };
+    const calls = Array.from({ length: 8 }, (_, i) => callOf("fanout", {}, "f" + i));
+    await runAgentTurn({
+      messages: [{ role: "user", content: "x" }], tools: [fanout],
+      client: scriptClient([{ tool_calls: calls }, { content: "done" }]), ctx: {},
+      unlimitedConcurrencyTools: ["fanout"],
+    });
+    expect(peak).toBe(8);
+  });
+
+  it("starts unbounded tools immediately even beside a stateful call", async () => {
+    let active = 0, peak = 0, activeWhenWriteRan = -1;
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const fanout = {
+      name: "fanout", description: "", parameters: { type: "object", properties: {} },
+      isReadOnly: true, needsConfirm: false, unboundedConcurrency: true,
+      run: async () => { active++; peak = Math.max(peak, active); await gate; active--; return { content: "ok" }; },
+    };
+    const stateful = {
+      name: "stateful", description: "", parameters: { type: "object", properties: {} },
+      isReadOnly: false, needsConfirm: false,
+      run: async () => { activeWhenWriteRan = active; release(); return { content: "ok" }; },
+    };
+    const calls = [callOf("stateful", {}, "s"), ...Array.from({ length: 8 }, (_, i) => callOf("fanout", {}, "m" + i))];
+    await runAgentTurn({
+      messages: [{ role: "user", content: "x" }], tools: [stateful, fanout],
+      client: scriptClient([{ tool_calls: calls }, { content: "done" }]), ctx: {},
+    });
+    expect(activeWhenWriteRan).toBe(8);
+    expect(peak).toBe(8);
+  });
+
   it("repairs preflight failures internally before confirmation or tool execution", async () => {
     let confirmed = 0, ran = 0, preflighted = 0;
     const writeTool = {
@@ -124,11 +181,86 @@ describe("runAgentTurn", () => {
     expect(messages.find((m) => m.role === "user" && /重新调用 w/.test(m.content))).toBeTruthy();
   });
 
+  it("keeps queued messages when the same response fails preflight", async () => {
+    let preflighted = false, injected = false;
+    const tool = {
+      name: "w", description: "", parameters: { type: "object", properties: {} },
+      isReadOnly: true, needsConfirm: false,
+      preflight: async () => {
+        if (preflighted) return { ok: true };
+        preflighted = true;
+        return { ok: false, content: "repair" };
+      },
+      run: async () => ({ content: "ok" }),
+    };
+    const messages = [{ role: "user", content: "x" }];
+    const r = await runAgentTurn({
+      messages, tools: [tool], ctx: {},
+      client: scriptClient([{ tool_calls: [callOf("w", {})] }, { content: "done" }]),
+      beforeAssistantDone: () => {
+        if (injected) return [];
+        injected = true;
+        return ["queued during repair"];
+      },
+    });
+    expect(r.final).toBe("done");
+    expect(messages.some((message) => message.role === "user" && message.content === "queued during repair")).toBe(true);
+  });
+
   it("stops cleanly when the signal is already aborted", async () => {
     const ac = new AbortController();
     ac.abort();
     const r = await runAgentTurn({ messages: [{ role: "user", content: "x" }], tools: [echoTool], client: scriptClient([{ content: "z" }]), ctx: {}, signal: ac.signal });
     expect(r.stopped).toBe("aborted");
+  });
+
+  it("injects queued messages between model steps before finishing", async () => {
+    let injected = false;
+    const client = scriptClient([{ content: "first" }, { content: "after inbox" }]);
+    const messages = [{ role: "user", content: "x" }];
+    const r = await runAgentTurn({
+      messages, tools: [], client, ctx: {},
+      beforeAssistantDone: () => {
+        if (injected) return [];
+        injected = true;
+        return ["queued message"];
+      },
+    });
+    expect(r.final).toBe("after inbox");
+    expect(messages.some((m) => m.role === "user" && m.content === "queued message")).toBe(true);
+  });
+
+  it("injects messages queued during tool execution before the next model request", async () => {
+    let releaseTool;
+    let toolStarted;
+    const started = new Promise((resolve) => { toolStarted = resolve; });
+    const gate = new Promise((resolve) => { releaseTool = resolve; });
+    const slow = {
+      name: "slow", description: "", parameters: { type: "object", properties: {} },
+      isReadOnly: true, needsConfirm: false,
+      run: async () => { toolStarted(); await gate; return { content: "ok" }; },
+    };
+    const seen = [];
+    let streamIndex = 0;
+    const client = {
+      stream: async (messages) => {
+        seen.push(messages.map((message) => ({ ...message })));
+        if (streamIndex++ === 0) return { content: "", tool_calls: [callOf("slow", {})] };
+        return { content: "done", tool_calls: [] };
+      },
+    };
+    const inbox = [];
+    const turn = runAgentTurn({
+      messages: [{ role: "user", content: "x" }], tools: [slow], client, ctx: {},
+      beforeStep: () => inbox.splice(0),
+    });
+    await started;
+    inbox.push("queued while tool ran");
+    releaseTool();
+    await turn;
+
+    expect(seen).toHaveLength(2);
+    expect(seen[1].some((message) => message.role === "user" && message.content === "queued while tool ran")).toBe(true);
   });
 });
 
