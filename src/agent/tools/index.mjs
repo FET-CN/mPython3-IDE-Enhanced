@@ -22,8 +22,11 @@ export const ALL_TOOLS = [
 
 /** Convert our tool defs into OpenAI `tools` function specs. */
 export function toToolSpecs(tools) {
-  return tools.map((t) => ({
-    type: "function",
-    function: { name: t.name, description: t.description, parameters: t.parameters },
-  }));
+  return tools.map((t) => {
+    const fn = { name: t.name, description: t.description, parameters: t.parameters };
+    if (t.strict === true) fn.strict = true;
+    const spec = { type: "function", function: fn };
+    if (t.fallbackParameters) spec._fallbackParameters = t.fallbackParameters;
+    return spec;
+  });
 }

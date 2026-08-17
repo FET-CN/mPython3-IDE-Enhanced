@@ -11,6 +11,28 @@ import { annotateIds, applyOps } from "../../host/ops.mjs";
 import { readWorkspaceIR, readPyCode } from "../../host/read.mjs";
 import { snapshot, injectOps } from "../../host/inject.mjs";
 import { renderRepairFeedback } from "../../ctx/assemble.mjs";
+import {
+  EDIT_BLOCKS_FALLBACK_PARAMETERS,
+  EDIT_BLOCKS_PARAMETERS,
+  decodeEditBlocksArgs,
+} from "./editBlocksSchema.mjs";
+
+const NORMALIZED_ARGS = Symbol("editBlocksNormalizedArgs");
+
+function decodeArgs(args) {
+  if (args?.[NORMALIZED_ARGS]) return { ok: true, args };
+  const decoded = decodeEditBlocksArgs(args);
+  if (decoded.ok) {
+    Object.defineProperty(decoded.args, NORMALIZED_ARGS, { value: true });
+    return decoded;
+  }
+  return {
+    ok: false,
+    content: "上一次 edit_blocks 工具调用未执行：参数结构不符合编辑算子协议。\n" +
+      decoded.errors.slice(0, 20).map((error) => `- ${error}`).join("\n") +
+      "\n请修正后重新调用 edit_blocks，不要把 JSON 写进聊天正文。",
+  };
+}
 
 /**
  * Pure plan step: expand + apply + validate ops against an id-annotated program.
@@ -38,36 +60,32 @@ export const editBlocksTool = {
     "调用前**必须先 read_workspace** 以获得正确的 id 与落点。算子语法见系统说明；" +
     "数学/逻辑表达式请用表达式字符串简写（如 \"x\":\"20 + 20*cos(angle)\"）避免深层嵌套。" +
     "若校验失败，本工具会返回精确错误，请据此修正后重试。",
-  parameters: {
-    type: "object",
-    properties: {
-      ops: {
-        type: "array",
-        description:
-          '编辑算子数组。每项形如 {op:"insert"|"delete"|"move"|"setField"|"clear", ...}。' +
-          "insert/move 需带 anchor 落点 {at,id?,input?,index?}。",
-        items: { type: "object" },
-      },
-    },
-    required: ["ops"],
-  },
+  parameters: EDIT_BLOCKS_PARAMETERS,
+  fallbackParameters: EDIT_BLOCKS_FALLBACK_PARAMETERS,
   isReadOnly: false,
   needsConfirm: true,
+  normalizeArgs(args) {
+    return decodeArgs(args);
+  },
   preflight(args, ctx) {
+    const decoded = decodeArgs(args);
+    if (!decoded.ok) return decoded;
     const caps = ctx?.caps;
     const catalog = ctx?.data?.catalog;
     if (!caps || !catalog) return { ok: false, content: "无法访问宿主工作区或知识库。" };
     const current = annotateIds(readWorkspaceIR(caps) || []);
-    const plan = planEdit(current, args?.ops, catalog);
+    const plan = planEdit(current, decoded.args.ops, catalog);
     return plan.ok ? { ok: true } : { ok: false, content: plan.feedback };
   },
   async run(args, ctx) {
+    const decoded = decodeArgs(args);
+    if (!decoded.ok) return { is_error: true, content: decoded.content };
     const caps = ctx?.caps;
     const catalog = ctx?.data?.catalog;
     if (!caps || !catalog) return { is_error: true, content: "无法访问宿主工作区或知识库。" };
 
     const current = annotateIds(readWorkspaceIR(caps) || []);
-    const plan = planEdit(current, args?.ops, catalog);
+    const plan = planEdit(current, decoded.args.ops, catalog);
     if (!plan.ok) return { is_error: true, content: plan.feedback };
 
     // Surgically patch the pre-edit snapshot so untouched blocks keep their exact

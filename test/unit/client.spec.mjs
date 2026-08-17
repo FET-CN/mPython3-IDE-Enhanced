@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { chatStream } from "../../src/llm/client.mjs";
+import { chatStream, makeClient } from "../../src/llm/client.mjs";
+import { toToolSpecs } from "../../src/agent/tools/index.mjs";
 
 /** Build a fake fetch that returns the given SSE chunks as a streaming body. */
 function sseFetch(chunks, { ok = true, status = 200 } = {}) {
@@ -65,5 +66,122 @@ describe("chatStream", () => {
   it("throws on non-ok HTTP", async () => {
     const f = async () => ({ ok: false, status: 500, text: async () => "boom", body: null });
     await expect(chatStream(cfg(f), [{ role: "user", content: "x" }], {})).rejects.toThrow(/LLM HTTP 500/);
+  });
+
+  it("only serializes strict for tools that explicitly opt in", () => {
+    const specs = toToolSpecs([
+      { name: "strict_one", description: "", parameters: { type: "object" }, strict: true },
+      { name: "normal_one", description: "", parameters: { type: "object" } },
+    ]);
+    expect(specs[0].function.strict).toBe(true);
+    expect(specs[1].function).not.toHaveProperty("strict");
+  });
+
+  it("downgrades a strict-schema compatibility 400 once before streaming starts", async () => {
+    const bodies = [];
+    const f = async (_url, init) => {
+      const body = JSON.parse(init.body);
+      bodies.push(body);
+      if (body.tools?.[0]?.function?.strict) {
+        return {
+          ok: false,
+          status: 400,
+          body: null,
+          text: async () => "strict mode is not supported by this endpoint",
+        };
+      }
+      return sseFetch([data({ choices: [{ delta: { content: "ok" }, finish_reason: "stop" }] })])();
+    };
+    const tools = toToolSpecs([{
+      name: "x", description: "", strict: true,
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    }]);
+    const result = await chatStream(cfg(f), [{ role: "user", content: "x" }], { tools });
+    expect(result.content).toBe("ok");
+    expect(result.strict_downgraded).toBe(true);
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0].tools[0].function.strict).toBe(true);
+    expect(bodies[1].tools[0].function).not.toHaveProperty("strict");
+  });
+
+  it("downgrades an unsupported recursive schema without leaking client metadata", async () => {
+    const bodies = [];
+    const f = async (_url, init) => {
+      const body = JSON.parse(init.body);
+      bodies.push(body);
+      if (body.tools?.[0]?.function?.parameters?.$defs) {
+        return {
+          ok: false,
+          status: 400,
+          body: null,
+          text: async () => "invalid JSON schema: $defs is unsupported",
+        };
+      }
+      return sseFetch([data({ choices: [{ delta: { content: "ok" }, finish_reason: "stop" }] })])();
+    };
+    const tools = toToolSpecs([{
+      name: "x", description: "",
+      parameters: { type: "object", properties: {}, $defs: { node: { type: "object" } } },
+      fallbackParameters: { type: "object", properties: {} },
+    }]);
+    const result = await chatStream(cfg(f), [{ role: "user", content: "x" }], { tools });
+    expect(result.tool_schema_downgraded).toBe(true);
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0].tools[0]).not.toHaveProperty("_fallbackParameters");
+    expect(bodies[1].tools[0].function.parameters).toEqual({ type: "object", properties: {} });
+  });
+
+  it("caches a schema downgrade on a bound client", async () => {
+    const bodies = [];
+    const f = async (_url, init) => {
+      const body = JSON.parse(init.body);
+      bodies.push(body);
+      if (body.tools?.[0]?.function?.parameters?.$defs) {
+        return { ok: false, status: 400, body: null, text: async () => "$defs is unsupported by this JSON schema endpoint" };
+      }
+      return sseFetch([data({ choices: [{ delta: { content: "ok" }, finish_reason: "stop" }] })])();
+    };
+    const tools = toToolSpecs([{
+      name: "x", description: "",
+      parameters: { type: "object", properties: {}, $defs: { node: { type: "object" } } },
+      fallbackParameters: { type: "object", properties: {} },
+    }]);
+    const client = makeClient(cfg(f));
+    await client.stream([{ role: "user", content: "one" }], { tools });
+    await client.stream([{ role: "user", content: "two" }], { tools });
+    expect(bodies).toHaveLength(3);
+    expect(bodies[2].tools[0].function.parameters).toEqual({ type: "object", properties: {} });
+  });
+
+  it("does not mask a genuinely invalid schema as provider incompatibility", async () => {
+    let calls = 0;
+    const f = async () => {
+      calls++;
+      return { ok: false, status: 400, body: null, text: async () => "invalid JSON schema: required property is missing" };
+    };
+    const tools = toToolSpecs([{
+      name: "x", description: "",
+      parameters: { type: "object", properties: {} },
+      fallbackParameters: { type: "object", properties: {} },
+    }]);
+    await expect(chatStream(cfg(f), [{ role: "user", content: "x" }], { tools }))
+      .rejects.toThrow(/required property is missing/);
+    expect(calls).toBe(1);
+  });
+
+  it("does not downgrade unrelated 400 responses", async () => {
+    let calls = 0;
+    const f = async () => ({
+      ok: false,
+      status: 400,
+      body: null,
+      text: async () => { calls++; return "messages are invalid"; },
+    });
+    const tools = toToolSpecs([{
+      name: "x", description: "", strict: true,
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    }]);
+    await expect(chatStream(cfg(f), [{ role: "user", content: "x" }], { tools })).rejects.toThrow(/messages are invalid/);
+    expect(calls).toBe(1);
   });
 });

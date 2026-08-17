@@ -1,12 +1,12 @@
 // src/ctx/prompts.mjs — Static context layers L0 (language spec) and L1 (core
 // board facts). These form the cacheable prefix of the system prompt.
 
-// L0 — the grammar of the new "graphical block language". Teaches the LLM to
-// emit an IR (JSON AST) that our compiler turns into Blockly XML. The LLM never
-// writes XML or Python.
+// L0 — the grammar of the new "graphical block language". The internal IR is a
+// JSON AST compiled deterministically into Blockly XML; the active agent passes
+// nodes through edit_blocks while the legacy pipeline renders the same data as JSON.
 export const LANGUAGE_SPEC = `# 图形化积木语言 (mPython Blockly)
 
-你在为「掌控板 (mPython/HandPy)」编写**图形化积木程序**。积木程序用一棵 JSON 语法树(称为 IR)表示；一个确定性编译器会把 IR 转成 Blockly XML 注入到图形化 IDE 的工作区。**你只输出 IR，绝不要输出 XML 或 Python。**
+你在为「掌控板 (mPython/HandPy)」编写**图形化积木程序**。积木程序在内部用一棵 JSON 语法树（称为 IR）表示，确定性编译器会把 IR 转成 Blockly XML。使用 agent 工具时，按下文 Wire 规则把 IR 节点编码进 \`edit_blocks\` 的 \`ops[].blocks\` 参数；不要直接编写 XML 或 Python。
 
 ## IR 语法
 - 程序 = 栈数组：\`[ 栈1, 栈2, ... ]\`。每个栈是画布上一组竖直连接的积木，独立摆放。
@@ -42,83 +42,49 @@ export const LANGUAGE_SPEC = `# 图形化积木语言 (mPython Blockly)
 8. 事件积木(标注"事件积木")只能作为栈顶第一个节点。
 9. 需要某积木却没在卡片里看到时，**不要硬凑近似积木**——用已给出的通用积木(变量/数学/循环)组合，或在思路里说明缺失，绝不臆造类型/字段。
 
-## 输出协议
-- 先用一句话说明思路(可选)，然后**只输出一个 \`\`\`json 代码块**，块内是 IR 程序(最外层是栈数组)。
-- 不要输出多个代码块，不要输出 XML/Python，不要在 JSON 里写注释。`;
+## 表示边界
+- 这里只定义 IR 节点语义。agent 模式通过 \`edit_blocks\` 工具参数传递节点；legacy 文本生成链路会在动态任务指令里另行说明 JSON 输出格式。
+- 不要直接生成 Blockly XML 或把转换后的 Python 当作编辑结果。`;
 
 // L0' — the EDIT-OPERATION protocol. The model never replaces or appends as a
 // whole program; it emits a plan of ops that transform the current workspace.
 // Styled after Claude Code's tool descriptions: purpose line → usage rules →
 // explicit FAIL-conditions-with-remedy → ALWAYS/NEVER imperatives → examples.
-export const OPS_SPEC = `# 编辑算子（你的输出 = 一组对工作区的"工具调用"）
+export const OPS_SPEC = `# 编辑算子（\`edit_blocks\` 的 \`ops\` 参数）
 
-你不是"重写整个程序"，而是像调用编辑工具一样对**当前工作区**下达一组算子。当前工作区里每个积木都带一个 id(如 \`b3\`)。**只输出一个 \`\`\`json 代码块**，内容为：
-\`\`\`
-{ "ops": [ <算子>, ... ] }
-\`\`\`
-算子按数组顺序依次执行；其中 \`id\` 一律引用"当前工作区"里已有的 id。
+你不是“重写整个程序”，而是通过 \`edit_blocks\` 对**当前工作区**下达一组算子。当前工作区里的积木带临时 id（如 \`b3\`）；id 一律引用本次读取到的现有积木。
+
+## Wire 编码（ALWAYS）
+工具 schema 使用闭合、可严格校验的 Wire DTO，与上方展示当前工作区的紧凑 map IR 有两点区别：
+- 每个算子始终写全 \`op/id/name/value/anchor/blocks\`；不用的标量填 \`null\`，不用的 \`blocks\` 填 \`[]\`。
+- 每个节点始终写全 \`type/fields/inputs/statements\`。动态 map 改成具名条目数组：字段是 \`{name,value}\`；语句是 \`{name,blocks}\`；输入用 \`kind:"expr"\` 携带 \`expression\`，或用 \`kind:"block"\` 携带递归 \`block\`，另一项必须为 \`null\`。
+- 锚点始终写全 \`at/id/input/index\`。\`new\` 的后三项为 \`null\`；\`after\` 只填 id；\`body\` 填 id/input，index 可为非负整数或 \`null\`。
 
 ## 下达前自检（ALWAYS）
-- 先读"当前工作区"和"可选落点"清单，确认你要操作的 id / 锚点**确实存在**。
-- 已存在且正确的积木**不要重建**；只下达达成需求所需的最小改动。
-- 版本(v2/v3)不确定且答案因此而异时，在思路里说明假设。
+- 先读当前工作区和可选落点，确认 id / 锚点确实存在。
+- 已存在且正确的积木不要重建；只下达达成需求所需的最小改动。
+- 算子按数组顺序执行。事件积木只能插入 \`new\` 顶层栈；不要把积木 move 进自己的子树。
 
-## 算子（每个都像一个工具）
-### insert — 放置一段新积木
-\`{ "op":"insert", "anchor":<锚点>, "blocks":[<积木节点>, ...] }\`
-- blocks 是一段竖直相连的 IR 节点数组(节点语法见上)。
-- NEVER 把事件积木(标注"事件积木")放到非 new 锚点——事件只能 \`at:"new"\`。
-- FAIL 条件：anchor.id 不存在 / \`after\` 的目标不能接 next / \`body\` 的 input 不是该积木的语句槽 → 改用合法锚点。
+## 五类算子
+- \`insert\`：只填 anchor 和非空 blocks。anchor 不存在、目标不能接 next、body input 不是语句槽都会失败。
+- \`delete\`：只填 id；删除该积木及内部子积木，下方链自动接合。
+- \`move\`：填 id 和 anchor；搬动该积木及内部子积木，不含其下方兄弟。
+- \`setField\`：填 id/name/value；下拉 value 必须来自积木卡片。
+- \`clear\`：其余字段全部为空；从头重写时先 clear 再 insert。
 
-### delete — 删除一个积木
-\`{ "op":"delete", "id":"b5" }\`
-- 删除该积木及其内部子积木；它下方的积木**自动接合**到上面，链不断。
-
-### move — 搬动一个积木（即连接 / 断开）
-\`{ "op":"move", "id":"b7", "anchor":<锚点> }\`
-- 只搬该积木及其内部子积木，**不含**其下方兄弟；原处自动接合。\`at:"new"\` 即断开成浮动积木。
-- NEVER 把一个积木 move 进它自己的子树。
-
-### setField — 修改字段 / 下拉值
-\`{ "op":"setField", "id":"b3", "name":"<字段名>", "value":"<新值>" }\`
-- 下拉字段的 value NEVER 超出该字段可选项。
-
-### clear — 清空整个工作区
-\`{ "op":"clear" }\`
-- "从头重写"时：先 \`clear\` 再 \`insert\`。
-
-## 锚点 anchor
-\`{ "at":"new" | "after" | "body", "id":"b3", "input":"DO", "index":<可选整数> }\`
-- \`new\`：新建独立顶层栈(无需 id)。\`after\`,id：接到积木 id 之后(id 必须能接 next)。\`body\`,id,input：放进积木 id 的 input 语句体(默认末尾，给 index 可指定位置)。
-- ALWAYS 只用"可选落点"清单里出现过的 id/锚点；NEVER 臆造 id。
-
-## 示例
+## Wire 示例
 <example>
-需求: (空工作区) 按A键时在屏幕显示 Hi
-输出:
+需求: 在空工作区新建一块显示文本的积木（演示表达式输入和嵌套值积木）
+工具参数:
 \`\`\`json
-{"ops":[{"op":"insert","anchor":{"at":"new"},"blocks":[{"type":"mpython_Interrupt_AB","fields":{"button":"button_a","action":"down"},"statements":{"DO":[{"type":"mpython_display_DispChar","inputs":{"x":{"type":"math_number","fields":{"NUM":"0"}},"y":{"type":"math_number","fields":{"NUM":"0"}},"message":{"type":"text","fields":{"TEXT":"Hi"}}}}]}}]}]}
+{"ops":[{"op":"insert","id":null,"name":null,"value":null,"anchor":{"at":"new","id":null,"input":null,"index":null},"blocks":[{"type":"mpython_display_DispChar","fields":[],"inputs":[{"name":"x","kind":"expr","expression":"0","block":null},{"name":"y","kind":"expr","expression":"0","block":null},{"name":"message","kind":"block","expression":null,"block":{"type":"text","fields":[{"name":"TEXT","value":"Hi"}],"inputs":[],"statements":[]}}],"statements":[]}]}]}
 \`\`\`
 </example>
 <example>
-需求: 当前工作区有事件积木 b1(按A键)，往它体里再加一句点亮RGB
-输出:
+需求: 删除 b4，并修改 b3 的 OP 字段
+工具参数:
 \`\`\`json
-{"ops":[{"op":"insert","anchor":{"at":"body","id":"b1","input":"DO"},"blocks":[{"type":"mpython_set_RGB","fields":{}}]}]}
-\`\`\`
-</example>
-<example>
-需求: 删除 id 为 b4 的那块积木
-输出:
-\`\`\`json
-{"ops":[{"op":"delete","id":"b4"}]}
-\`\`\`
-</example>
-<example>
-需求: (空工作区) 让小圆按角度 angle 在 OLED 上做圆周运动并每帧让 angle 递增 (演示表达式简写：inputs 直接写算式字符串，避免深层嵌套)
-输出:
-\`\`\`json
-{"ops":[{"op":"insert","anchor":{"at":"new"},"blocks":[{"type":"mpython_display_fill_circle","fields":{"state":"1"},"inputs":{"x":"64 + 20*cos(angle)","y":"32 + 20*sin(angle)","radius":"4"}},{"type":"variables_set","fields":{"VAR":"angle"},"inputs":{"VALUE":"(angle + 10) % 360"}}]}]}
+{"ops":[{"op":"delete","id":"b4","name":null,"value":null,"anchor":null,"blocks":[]},{"op":"setField","id":"b3","name":"OP","value":"ADD","anchor":null,"blocks":[]}]}
 \`\`\`
 </example>`;
 

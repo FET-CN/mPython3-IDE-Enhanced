@@ -34,6 +34,43 @@ describe("runAgentTurn", () => {
     expect(messages.at(-1)).toMatchObject({ role: "assistant", content: "你好" });
   });
 
+  it("normalizes structured arguments before preflight, confirmation and execution", async () => {
+    const seen = [];
+    const writeTool = {
+      name: "w", description: "", parameters: { type: "object", properties: {} },
+      isReadOnly: false, needsConfirm: true,
+      normalizeArgs: (args) => ({ ok: true, args: { value: args.wire_value } }),
+      preflight: (args) => { seen.push(["preflight", args]); return { ok: true }; },
+      run: async (args) => { seen.push(["run", args]); return { content: "ok" }; },
+    };
+    const ctx = {
+      session: { approvals: new Set() },
+      confirm: async (_tool, args) => { seen.push(["confirm", args]); return "once"; },
+    };
+    await runAgentTurn({
+      messages: [{ role: "user", content: "x" }], tools: [writeTool], ctx,
+      client: scriptClient([{ tool_calls: [callOf("w", { wire_value: 7 })] }, { content: "done" }]),
+    });
+    expect(seen).toEqual([
+      ["preflight", { value: 7 }],
+      ["confirm", { value: 7 }],
+      ["run", { value: 7 }],
+    ]);
+  });
+
+  it("repairs a small tool-argument bracket imbalance before structural validation", async () => {
+    const call = callOf("echo", { v: 42 });
+    call.function.arguments += "}";
+    const messages = [{ role: "user", content: "x" }];
+    await runAgentTurn({
+      messages, tools: [echoTool], ctx: {},
+      client: scriptClient([{ tool_calls: [call] }, { content: "done" }]),
+    });
+    expect(messages.find((message) => message.role === "tool")?.content).toBe("echo:42");
+    expect(messages.find((message) => message.role === "assistant")?.tool_calls[0].function.arguments)
+      .toBe('{"v":42}');
+  });
+
   it("executes a tool call, feeds the result back, then finishes", async () => {
     const client = scriptClient([
       { tool_calls: [callOf("echo", { v: 42 })] },

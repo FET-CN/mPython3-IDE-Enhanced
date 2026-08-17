@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { retrieve, coreTypes, groupCatalog } from "../../src/kb/retriever.mjs";
 import { renderCard } from "../../src/ctx/cards.mjs";
 import { assembleMessages, renderRepairFeedback } from "../../src/ctx/assemble.mjs";
+import { buildAgentSystem } from "../../src/ctx/agent-prompt.mjs";
 import { validate } from "../../src/xml/validate.mjs";
 import { compile } from "../../src/xml/compile.mjs";
 import { decompile, canonicalize } from "../../src/xml/decompile.mjs";
@@ -155,6 +156,24 @@ d("context engineering (requires built catalog)", () => {
       expect(msgs[1].content).toContain("按A键显示Hello");
       expect(msgs[1].content).toContain("mpython_Interrupt_AB");
       expect(msgs[1].content).toContain("v2");
+      expect(msgs[1].content).toContain("只输出一个");
+      expect(msgs[0].content).not.toContain("只输出一个");
+    });
+
+    it("keeps the active agent on tool arguments instead of fenced JSON output", () => {
+      const system = buildAgentSystem({
+        catalog,
+        coreTypes: ["logic_compare"],
+        preferredTypes: [],
+        seeds,
+        core: { capabilities: [] },
+        antipatterns: { rules: [] },
+        version: "v2",
+      });
+      expect(system).toContain("调用 `edit_blocks`");
+      expect(system).toContain("不要把算子 JSON 写进聊天正文");
+      expect(system).not.toContain("只输出一个");
+      expect(system).not.toContain("请忽略下文");
     });
   });
 

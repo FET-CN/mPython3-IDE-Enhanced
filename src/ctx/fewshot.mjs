@@ -7,9 +7,9 @@ export function renderSeeds(seeds) {
   if (!seeds?.length) return "";
   const blocks = seeds.map((s, i) => {
     const ir = JSON.stringify(s.ir);
-    return `<example>\n需求: ${s.intent}\n输出:\n\`\`\`json\n${ir}\n\`\`\`\n</example>`;
+    return `<example>\n需求: ${s.intent}\n对应的内部 IR 程序示例（只用于理解节点语义；调用 edit_blocks 时按 Wire 规则编码）：\n\`\`\`json\n${ir}\n\`\`\`\n</example>`;
   });
-  return "# 示例 (few-shot)\n" + blocks.join("\n");
+  return "# IR 节点示例 (few-shot)\n" + blocks.join("\n");
 }
 
 /**

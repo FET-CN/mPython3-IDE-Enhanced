@@ -5,6 +5,8 @@
 //                    finish_reason} and pushes text deltas through onDelta().
 // Config (baseURL, apiKey, model) comes from localStorage m3e_* at call sites.
 
+import { log } from "../runtime/log.mjs";
+
 /** Transient transport faults worth retrying (truncated stream, reset, 5xx). */
 function isTransient(err) {
   const m = String(err?.message || err || "");
@@ -15,6 +17,40 @@ function isTransient(err) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function hasToolSchemaFallback(tools) {
+  return (tools || []).some((tool) => tool?.function?.strict === true || tool?._fallbackParameters);
+}
+
+function compatibleTools(tools) {
+  return (tools || []).map((tool) => {
+    let fn = tool.function;
+    if (fn?.strict === true) {
+      const { strict: _strict, ...rest } = fn;
+      fn = rest;
+    }
+    if (tool?._fallbackParameters) fn = { ...fn, parameters: tool._fallbackParameters };
+    return { ...tool, function: fn };
+  });
+}
+
+function wireTools(tools) {
+  return (tools || []).map((tool) => {
+    const { _fallbackParameters, ...wire } = tool;
+    return wire;
+  });
+}
+
+function cachedCompatibleTools(tools) {
+  return wireTools(compatibleTools(tools));
+}
+
+function isToolSchemaCompatibilityError(err) {
+  if (err?.status !== 400) return false;
+  const detail = `${err?.message || ""}\n${err?.body || ""}`;
+  return /strict|json.?schema|schema|additionalProperties|\$defs?|\$ref/i.test(detail) &&
+    /unsupported|not supported|does not support|unknown (?:field|keyword|parameter)|unrecognized|not permitted|not allowed/i.test(detail);
+}
 
 /**
  * @param cfg { baseURL, apiKey, model, temperature?, fetchImpl? }
@@ -74,12 +110,26 @@ async function chatOnce(cfg, messages, { signal } = {}) {
 export async function chatStream(cfg, messages, o = {}) {
   const maxAttempts = 3;
   let lastErr;
+  let options = o;
+  let toolSchemaDowngraded = false;
+  const hadStrictTools = (o.tools || []).some((tool) => tool?.function?.strict === true);
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     let started = false;
     try {
-      return await chatStreamOnce(cfg, messages, o, () => { started = true; });
+      const response = await chatStreamOnce(cfg, messages, options, () => { started = true; });
+      if (toolSchemaDowngraded) {
+        response.tool_schema_downgraded = true;
+        if (hadStrictTools) response.strict_downgraded = true;
+      }
+      return response;
     } catch (err) {
       lastErr = err;
+      if (!started && !o.signal?.aborted && !toolSchemaDowngraded && hasToolSchemaFallback(options.tools) && isToolSchemaCompatibilityError(err)) {
+        toolSchemaDowngraded = true;
+        options = { ...options, tools: compatibleTools(options.tools) };
+        log.info("当前 LLM endpoint 不兼容完整工具 schema，本次请求已降级为兼容 schema");
+        continue;
+      }
       // Only retry if nothing was emitted yet (otherwise the UI already has a
       // partial answer and re-streaming would duplicate it).
       if (started || o.signal?.aborted || attempt === maxAttempts || !isTransient(err)) throw err;
@@ -98,7 +148,7 @@ async function chatStreamOnce(cfg, messages, o, markStarted) {
     stream: true,
   };
   if (o.tools && o.tools.length) {
-    body.tools = o.tools;
+    body.tools = wireTools(o.tools);
     body.tool_choice = o.toolChoice ?? "auto";
   }
   const res = await f(endpoint(cfg), {
@@ -212,7 +262,10 @@ function headers(cfg) {
 }
 async function httpError(res) {
   const body = await res.text().catch(() => "");
-  return new Error(`LLM HTTP ${res.status}: ${body.slice(0, 300)}`);
+  const err = new Error(`LLM HTTP ${res.status}: ${body.slice(0, 300)}`);
+  err.status = res.status;
+  err.body = body;
+  return err;
 }
 
 /**
@@ -221,9 +274,17 @@ async function httpError(res) {
  * agent loop.
  */
 export function makeClient(cfg) {
+  let useCompatibleToolSchema = false;
   const fn = (messages, opts) => chat(cfg, messages, opts || {});
   fn.complete = (messages, opts) => chat(cfg, messages, opts || {});
-  fn.stream = (messages, opts) => chatStream(cfg, messages, opts || {});
+  fn.stream = async (messages, opts = {}) => {
+    const effective = useCompatibleToolSchema && hasToolSchemaFallback(opts.tools)
+      ? { ...opts, tools: cachedCompatibleTools(opts.tools) }
+      : opts;
+    const response = await chatStream(cfg, messages, effective);
+    if (response.tool_schema_downgraded) useCompatibleToolSchema = true;
+    return response;
+  };
   fn.cfg = cfg;
   return fn;
 }

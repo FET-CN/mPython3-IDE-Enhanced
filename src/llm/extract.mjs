@@ -81,7 +81,7 @@ export function repairJson(s) {
 
 // Bound how much repair we tolerate, so we recover honest off-by-a-few brace
 // slips but never "repair" wholesale garbage into a plausible-but-wrong tree.
-const MAX_JSON_FIXES = 6;
+export const MAX_JSON_FIXES = 6;
 
 /** Try repairJson on each candidate (last-first); return {value,fixes} or null. */
 function looseParseCandidates(candidates) {

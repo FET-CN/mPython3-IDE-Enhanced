@@ -60,10 +60,9 @@ export const RETIRED_BLOCKS = `# 已下架的旧积木（改用新版）
 （不确定新名时用 search_blocks 检索确认；优先选积木栏里实际存在的积木。）`;
 
 
-// Under tool-calling, the same op grammar applies but the channel is the
-// edit_blocks tool argument. Make that explicit, then reuse OPS_SPEC verbatim.
-const OPS_ADAPTER = `# 编辑算子语法（用于 edit_blocks 工具的 ops 参数）
-下面描述编辑算子的语义与锚点规则。**在本助手里，你通过调用 edit_blocks 工具、把这些算子作为 \`ops\` 数组参数传入来下达**；请忽略下文中"只输出一个 json 代码块"之类的措辞——那是输出通道的旧说法，现在的输出通道就是 edit_blocks 工具。算子的语义、锚点、硬规则与示例仍然完全适用。`;
+// The op grammar below is the semantic contract for the edit_blocks argument.
+const OPS_ADAPTER = `# 编辑算子调用方式
+需要修改工作区时，调用 \`edit_blocks\`，把完整编辑计划放入工具的 \`ops\` 参数。工具 schema 约束参数结构，运行时还会按当前积木 catalog 校验 type、字段、插槽、锚点和连接类型。不要把算子 JSON 写进聊天正文。`;
 
 function cardsFor(types, catalog, limit) {
   const out = [];

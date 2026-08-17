@@ -4,6 +4,7 @@
 // and recurses until the model answers with no tool calls. AbortSignal aware.
 
 import { toToolSpecs } from "./tools/index.mjs";
+import { MAX_JSON_FIXES, repairJson } from "../llm/extract.mjs";
 import { log, clip, contextText } from "../runtime/log.mjs";
 
 const MAX_STEPS = 16;
@@ -66,7 +67,8 @@ export async function runAgentTurn(o) {
       : null;
     const afterResponse = injectedMessages(injected);
 
-    const repair = await preflightToolCalls(res.tool_calls || [], byName, runCtx);
+    const prepared = await prepareToolCalls(res.tool_calls || [], byName);
+    const repair = prepared.repair || await preflightToolCalls(res.tool_calls || [], byName, runCtx, prepared.argsByCall);
     if (repair) {
       emit({ type: "assistant_discard" });
       emit({ type: "tool_repair", name: repair.name, detail: repair.content });
@@ -103,7 +105,7 @@ export async function runAgentTurn(o) {
     }
 
     const calls = res.tool_calls;
-    const exec = (c) => executeCall(c, byName, runCtx);
+    const exec = (c) => executeCall(c, byName, runCtx, prepared.argsByCall);
     const results = await mapToolCalls(calls, byName, maxConcurrency, unlimitedTools, exec);
     for (const r of results) messages.push(r);
     if (afterResponse.length) messages.push(...afterResponse);
@@ -117,35 +119,71 @@ function injectedMessages(value) {
     .filter((message) => message?.role && message?.content != null);
 }
 
+/** Parse and normalize each known call once, before preflight and confirmation.
+ * A small bracket imbalance may be repaired, but the parsed value must still pass
+ * the tool's own structural validator before it can reach the user or host. */
+async function prepareToolCalls(calls, byName) {
+  const argsByCall = new Map();
+  for (const call of calls || []) {
+    const name = call.function?.name;
+    const tool = byName.get(name);
+    if (!tool) continue;
+    const raw = call.function?.arguments || "";
+    let args;
+    try {
+      args = raw ? JSON.parse(raw) : {};
+    } catch (error) {
+      const repaired = repairJson(raw);
+      if (repaired.fixes === 0 || repaired.fixes > MAX_JSON_FIXES) {
+        return { argsByCall, repair: invalidJsonRepair(name, error) };
+      }
+      try {
+        args = JSON.parse(repaired.out);
+        call.function.arguments = JSON.stringify(args);
+        log.info(`工具 ${name} 参数已修复 ${repaired.fixes} 处括号失衡`);
+      } catch {
+        return { argsByCall, repair: invalidJsonRepair(name, error) };
+      }
+    }
+    if (tool.normalizeArgs) {
+      const normalized = await tool.normalizeArgs(args);
+      if (!normalized?.ok) {
+        return {
+          argsByCall,
+          repair: { name, content: String(normalized?.content || `上一次 ${name} 工具调用未执行：参数结构无效，请修正后重试。`) },
+        };
+      }
+      args = normalized.args;
+    }
+    argsByCall.set(call, args);
+  }
+  return { argsByCall, repair: null };
+}
+
+function invalidJsonRepair(name, error) {
+  return {
+    name,
+    content: `上一次 ${name} 工具调用未执行：参数不是合法 JSON（${error.message}）。请修正后重新调用 ${name}，不要把 JSON 写进聊天正文。`,
+  };
+}
+
 /** Run model-repairable, side-effect-free checks before confirmation/execution.
  *  A failure is intentionally NOT encoded as assistant tool_calls + tool output:
  *  it is an internal repair turn, so we append only a compact user-facing-to-LLM
  *  hint and ask the model again. */
-async function preflightToolCalls(calls, byName, ctx) {
+async function preflightToolCalls(calls, byName, ctx, argsByCall) {
   for (const call of calls || []) {
     const name = call.function?.name;
     const tool = byName.get(name);
     if (!tool?.preflight) continue;
-
-    let args = {};
-    try {
-      const raw = call.function?.arguments;
-      args = raw ? JSON.parse(raw) : {};
-    } catch (e) {
-      return {
-        name,
-        content: `上一次 ${name} 工具调用未执行：参数不是合法 JSON（${e.message}）。请修正后重新调用 ${name}，不要把 JSON 写进聊天正文。`,
-      };
-    }
-
-    const out = await tool.preflight(args, ctx);
+    const out = await tool.preflight(argsByCall.get(call) || {}, ctx);
     if (out && out.ok === false) return { name, content: String(out.content || "工具预校验失败，请修正后重试。") };
   }
   return null;
 }
 
 /** Execute one tool_call → an OpenAI `tool` message (always, even on error). */
-async function executeCall(call, byName, ctx) {
+async function executeCall(call, byName, ctx, argsByCall) {
   const id = call.id;
   const name = call.function?.name;
   const tool = byName.get(name);
@@ -153,14 +191,7 @@ async function executeCall(call, byName, ctx) {
 
   if (!tool) { log.debug(`未知工具：${name}`); return toolMsg(`未知工具：${name}`); }
 
-  let args = {};
-  try {
-    const raw = call.function?.arguments;
-    args = raw ? JSON.parse(raw) : {};
-  } catch (e) {
-    log.debug(`工具 ${name} 参数解析失败`, clip(call.function?.arguments));
-    return toolMsg(`工具参数不是合法 JSON：${e.message}`);
-  }
+  const args = argsByCall.get(call) || {};
 
   // Confirmation gate for write/side-effecting tools (Phase 7 wires the UI).
   if (tool.needsConfirm && !ctx.session?.approvals?.has(tool.name)) {
